@@ -16,7 +16,7 @@ With the *Presentation* preset (stage groups and node colors):
 ## Install
 
 Copy (or clone) this folder into `ComfyUI/custom_nodes/`, so you have
-`ComfyUI/custom_nodes/ComfyUIPrettifier/__init__.py`, then restart ComfyUI and
+`ComfyUI/custom_nodes/comfyui-prettifier/__init__.py`, then restart ComfyUI and
 refresh the browser. It is frontend-only: no Python dependencies, no new nodes.
 
 ## Use it
@@ -41,6 +41,7 @@ set several options at once. **Apply** saves the options as your defaults; **Can
 
 ## What it does
 
+**Layout**
 1. **Columns by flow.** Nodes are placed in columns following the links
    (a Sugiyama-style layered layout). Cycles are handled, and loaders can sit right
    next to the nodes that use them.
@@ -56,49 +57,71 @@ set several options at once. **Apply** saves the options as your defaults; **Can
    pipeline stage (Models, Inputs, Prompt, Sampling, Latent, Image, Mask, Output),
    node category, or connected section. Grouped nodes are laid out together and
    groups never overlap.
-6. **Extras.** Notes are gathered into a row, unconnected nodes are packed neatly,
-   pinned nodes stay put, optional stage colors for nodes, link style, snap to grid,
-   zoom to fit, and an animated transition.
+
+**Around the layout**
+- **Reroute cleanup.** Old reroute dots are cleared and long links that would run
+  through a node get new dots that carry them above or below it. Or just remove
+  every dot, or leave them alone.
+- **Renaming.** Rename node titles and connector labels from templates
+  (`{stage}: {default}`, `{name}[ ← {source}]`), with criteria (only untouched
+  nodes, only matching types, only connected connectors), capitalization,
+  numbering of duplicates, and find/replace rules.
+- **Collapse and inactive nodes.** Auto-collapse nodes matching a pattern (loaders,
+  primitives…), expand everything, and dim and/or collapse muted or bypassed nodes.
+- **Palettes and themes.** Five built-in color palettes plus a custom one. Save any
+  set of options as a named theme, and export or import themes as JSON files.
+- **Per-workflow options.** The options a workflow was prettified with are stored
+  in the workflow file and reused next time.
+- **Summary note.** A note listing models, LoRAs, resolution, sampler settings and
+  seeds (optionally prompts), refreshed on every prettify.
+- **Lint report.** Flags missing required inputs, models that are not in the list,
+  missing node types, unused nodes, duplicate loaders, suspicious values (very high
+  steps or CFG, zero denoise, sizes not divisible by 8…) and muted or bypassed
+  nodes. Click a finding to jump to the node.
+- **Automatic runs.** Optionally prettify when a workflow is opened and/or saved.
+- **Subgraphs.** Prettifying a workflow also tidies the inside of every subgraph.
+- Notes are gathered into a row, unconnected nodes are packed neatly, pinned nodes
+  stay put, plus snap to grid, zoom to fit and an animated transition.
 
 Also included: align left/right/top/bottom/center, distribute, match width/height,
 shrink to fit content, and fit groups to their nodes.
 
+### Renaming templates
+
+| Where | Tokens |
+| --- | --- |
+| Node titles | `{title}` current title, `{default}` default name, `{type}`, `{id}`, `{n}` number among nodes of the same type, `{stage}`, `{category}`, `{group}`, `{widget:NAME}` a widget value |
+| Connectors | `{name}`, `{label}` current label, `{type}` data type, `{node}` this node's title, `{source}` title of the node feeding an input, `{sourceSlot}` |
+
+A `[bracketed part]` is dropped when a token inside it is empty. Find/replace rules
+look like `find => replace; find2 => replace2` (regular expressions), and can be
+limited to node or data types: `CLIPTextEncode :: ^.*$ => Prompt`.
+
 ## Options
 
-| Tab | Option | Default |
-| --- | --- | --- |
-| Layout | Flow direction (left→right / top→bottom) | Left to right |
-| | Column assignment (balanced / early / late) | Balanced |
-| | Vertical alignment (straighten links / top / center) | Straighten links |
-| | Node alignment inside a column | Left |
-| | Crossing reduction passes | 8 |
-| | Link straightening iterations | 12 |
-| | Respect current top-to-bottom order | On |
-| Spacing | Horizontal gap / vertical gap / section gap | 80 / 40 / 160 |
-| | Snap to grid, grid size | On, 10 |
-| | Anchor (keep in place / move to origin) | Keep |
-| Sizing | Node width (uniform per column / fit / fixed / don't change) | Uniform per column |
-| | Fixed, minimum, maximum width | 320 / 200 / 600 |
-| | Node height (fit / don't change) | Fit |
-| | Also shrink nodes with images or text boxes | Off |
-| Groups | Create groups by (auto / existing / stage / category / section / none) | Auto |
-| | Minimum nodes per new group | 2 |
-| | Category depth | 1 |
-| | Group padding, title size | 20, 24 |
-| | Group color (auto / stage / single / don't change), single color | Auto |
-| Placement | Unconnected nodes (row below / column right / leave) | Row below |
-| | Notes (row above / row below / leave) | Row above |
-| | Separate sections (stack vertically / side by side) | Vertically |
-| | Never move pinned nodes | On |
-| Appearance | Node colors (keep / by stage / reset) | Keep |
-| | Link style (keep / spline / linear / straight) | Keep |
-| | Animate, duration | On, 350 ms |
-| | Zoom to fit afterwards | Off |
-| Behavior | Prettify what (auto / everything / selection) | Auto |
-| | Show a summary message | On |
+| Tab | Options |
+| --- | --- |
+| Layout | Flow direction, column assignment, vertical alignment, alignment inside a column, crossing reduction passes, link straightening iterations, respect current order |
+| Spacing | Horizontal, vertical and section gaps, snap to grid, grid size, anchor |
+| Sizing | Node width mode, fixed/min/max width, node height mode, shrink nodes with images or text |
+| Groups | Group by (auto, existing, stage, category, section, none), minimum group size, category depth, padding, title size, color mode, single color |
+| Placement | Unconnected nodes, notes, separate sections, never move pinned nodes |
+| Links | Reroute dots (auto, remove, keep), clearance, minimum link length |
+| Nodes | Collapse mode and pattern, muted/bypassed style, subgraphs |
+| Renaming | Rename on prettify, title mode/template/criteria/type filter/capitalization/numbering/rules, connector mode/template/sides/only connected/widget inputs/capitalization/rules |
+| Notes | Summary note on/off, type, title, include prompts |
+| Appearance | Palette, custom palette JSON, node colors, link style, animation, zoom to fit |
+| Behavior | Scope, prettify on open/save, remember and use per-workflow options, summary message |
+| Lint | Check on prettify, each check on/off, step and CFG thresholds |
 
 "Auto" grouping keeps your groups if the workflow has any, and otherwise groups by
 pipeline stage. "No groups" removes groups in the area being prettified.
+
+Commands (top menu, canvas right-click, or bind your own keys): Prettify workflow,
+Prettify selected nodes, Rename nodes and connectors, Lint workflow, Create or update
+summary note, Reroute links around nodes, Remove all reroute dots, Prettifier
+options, Undo last prettify, Fit groups to their nodes, Forget this workflow's
+remembered options, and the Align tools.
 
 ## Project layout
 
@@ -108,8 +131,13 @@ web/prettifier.js  extension entry: commands, keybindings, menus, settings regis
 web/settings.js    option schema, defaults, presets, settings read/write
 web/layout.js      pure layout engine (no ComfyUI imports, unit-testable)
 web/graph.js       LiteGraph adapter: read graph, apply result, snapshots, align tools
-web/core.js        prettify / undo actions
+web/core.js        prettify / rename / undo actions, pass ordering
+web/rename.js      pure renaming engine (templates, rules)
+web/lint.js        pure lint checks
+web/extras.js      reroutes, collapse rules, summary note, per-workflow options, subgraphs
+web/themes.js      palettes, saved themes, export/import
 web/dialog.js      options dialog with live preview
+web/lintdialog.js  lint report panel
 tests/             Node tests for the engine (node tests/test_layout.mjs --svg)
 ```
 
@@ -120,12 +148,17 @@ The engine runs in plain Node 18+:
 ```
 node tests/test_layout.mjs          # invariants: no overlaps, groups don't overlap, flow goes forward
 node tests/test_layout.mjs --svg    # also writes before/after SVGs to tests/out/
+node tests/test_rename.mjs
+node tests/test_lint.mjs
 ```
 
 ## Known limitations
 
-- Native reroute points (the dots on links in newer frontends) are not moved;
-  legacy Reroute nodes are laid out like any other node.
+- Reroute cleanup works on native reroute dots; legacy Reroute nodes are laid out
+  like any other node. Auto routing is a simple above-or-below detour, not a full
+  router, so busy graphs can still have links crossing nodes.
+- Prettify on save hooks ComfyUI's Save and Save As commands; other ways of
+  saving (export, API) are not affected.
 - Nested groups: nodes are laid out by their innermost group; outer groups are
   refit around their contents afterwards and may overlap neighbours.
 - Inside a subgraph, the open subgraph is what gets prettified.

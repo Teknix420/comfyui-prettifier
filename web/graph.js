@@ -2,10 +2,11 @@
 // Reads the live graph into the engine's model, applies results, and keeps
 // snapshots so a prettify can be undone or previewed.
 
-import { computeLayout, STAGE_NODE_COLORS } from "./layout.js";
+import { computeLayout, STAGE_NODE_COLORS, stageOf } from "./layout.js";
+import { computeRenames } from "./rename.js";
 
 const LG = () => globalThis.LiteGraph || {};
-const titleHeight = () => LG().NODE_TITLE_HEIGHT ?? 30;
+export const titleHeight = () => LG().NODE_TITLE_HEIGHT ?? 30;
 
 export function activeGraph(app) {
   return app.canvas?.graph ?? app.graph;
@@ -19,7 +20,14 @@ export function graphGroups(graph) {
   return [...(graph?._groups ?? graph?.groups ?? [])];
 }
 
-function getLink(graph, id) {
+export function graphLinks(graph) {
+  const links = graph?.links;
+  if (!links) return [];
+  if (typeof links.values === "function") return [...links.values()];
+  return Object.values(links).filter(Boolean);
+}
+
+export function getLink(graph, id) {
   if (id == null) return null;
   const links = graph.links;
   if (!links) return null;
@@ -61,7 +69,7 @@ function groupCtor(graph) {
   return LG().LGraphGroup ?? globalThis.LGraphGroup ?? graphGroups(graph)[0]?.constructor;
 }
 
-function isNote(node) {
+export function isNote(node) {
   const t = String(node.type || "");
   return /^(Note|MarkdownNote|PrimitiveNote)$/i.test(t) || /note/i.test(t) && !(node.outputs?.length || node.inputs?.length);
 }
@@ -76,10 +84,27 @@ function hasLargeContent(node) {
   );
 }
 
+let measureCtx = null;
+function textWidth(text) {
+  if (!text) return 0;
+  try {
+    measureCtx ??= document.createElement("canvas").getContext("2d");
+    measureCtx.font = `${LG().NODE_TEXT_SIZE ?? 14}px Arial`;
+    return measureCtx.measureText(String(text)).width;
+  } catch {
+    return String(text).length * 8;
+  }
+}
+
+function collapsedWidth(n) {
+  const est = Math.min(n.size[0], textWidth(n.title) + titleHeight() * 2);
+  return Math.max(n._collapsed_width ?? 0, est) || 120;
+}
+
 function fitSize(node) {
   try {
     const s = node.computeSize?.();
-    if (s && s[0] > 0 && s[1] >= 0) return [s[0], s[1]];
+    if (s && s[0] > 0 && s[1] >= 0) return [Math.max(s[0], textWidth(node.title) + 50), s[1]];
   } catch {}
   return [node.size[0], node.size[1]];
 }
@@ -131,7 +156,7 @@ export function readModel(graph, nodes) {
   const modelNodes = nodes.map((n) => {
     const collapsed = !!n.flags?.collapsed;
     const [fw, fh] = fitSize(n);
-    const cw = n._collapsed_width ?? 120;
+    const cw = collapsedWidth(n);
     return {
       id: n.id,
       type: n.type ?? n.comfyClass,
@@ -192,6 +217,10 @@ export function takeSnapshot(graph) {
       size: [n.size[0], n.size[1]],
       color: n.color,
       bgcolor: n.bgcolor,
+      title: n.title,
+      collapsed: !!n.flags?.collapsed,
+      inLabels: (n.inputs || []).map((i) => i?.label),
+      outLabels: (n.outputs || []).map((i) => i?.label),
     })),
     groups: graphGroups(graph).map((g) => ({ group: g, data: safeSerialize(g) })),
   };
@@ -208,14 +237,24 @@ function safeSerialize(g) {
 
 export function restoreSnapshot(snap) {
   const graph = snap.graph;
+  // Nodes Prettifier added after the snapshot (the summary note) are removed again.
+  const known = new Set(snap.nodes.map((s) => s.node));
+  for (const n of graphNodes(graph)) if (!known.has(n) && n.properties?.prettifierSummary) graph.remove(n);
   for (const s of snap.nodes) {
     const n = s.node;
     if (!graphNodes(graph).includes(n)) continue;
+    if (!!n.flags?.collapsed !== s.collapsed) {
+      if (typeof n.collapse === "function") n.collapse(true);
+      else (n.flags ??= {}).collapsed = s.collapsed;
+    }
     setNodeSize(n, s.size);
     n.pos[0] = s.pos[0];
     n.pos[1] = s.pos[1];
     n.color = s.color;
     n.bgcolor = s.bgcolor;
+    if (s.title !== undefined) n.title = s.title;
+    (n.inputs || []).forEach((slot, i) => slot && setSlotLabel(slot, s.inLabels?.[i]));
+    (n.outputs || []).forEach((slot, i) => slot && setSlotLabel(slot, s.outLabels?.[i]));
   }
   // Remove groups that did not exist, restore those that did.
   const original = new Set(snap.groups.map((s) => s.group));
@@ -243,6 +282,84 @@ function setNodeSize(n, size) {
   }
 }
 
+// --- renaming -----------------------------------------------------------------
+
+function setSlotLabel(slot, label) {
+  if (label == null || label === "") delete slot.label;
+  else slot.label = label;
+}
+
+export function nodeCategory(n) {
+  return n.constructor?.nodeData?.category ?? n.constructor?.category ?? n.category ?? "";
+}
+
+export function defaultTitle(n) {
+  return n.constructor?.nodeData?.display_name || n.constructor?.title || n.type || "";
+}
+
+/** Apply the renaming rules to the given nodes. Returns { titles, labels } counts. */
+export function renameNodes(graph, nodes, opts) {
+  if (opts.nodeTitleMode === "keep" && opts.slotLabelMode === "keep") return { titles: 0, labels: 0 };
+  const titleH = titleHeight();
+  const groups = graphGroups(graph).map((g) => ({ g, ...groupRect(g) }));
+  const model = nodes.map((n) => {
+    const cx = n.pos[0] + n.size[0] / 2, cy = n.pos[1] + n.size[1] / 2 - titleH / 2;
+    const group = groups
+      .filter((g) => cx >= g.x && cx <= g.x + g.w && cy >= g.y && cy <= g.y + g.h)
+      .sort((a, b) => a.w * a.h - b.w * b.h)[0];
+    const widgets = {};
+    for (const w of n.widgets || []) if (w?.name && (typeof w.value === "string" || typeof w.value === "number")) widgets[w.name] = w.value;
+    const category = nodeCategory(n);
+    const type = n.type ?? n.comfyClass;
+    return {
+      id: n.id,
+      title: n.title ?? "",
+      defaultTitle: defaultTitle(n),
+      type,
+      category,
+      stage: stageOf({ type, category, isNote: isNote(n), isOutput: !!n.constructor?.nodeData?.output_node }),
+      group: group?.g.title ?? "",
+      x: n.pos[0],
+      y: n.pos[1],
+      widgets,
+      inputs: (n.inputs || []).map((slot) => {
+        const link = getLink(graph, slot?.link);
+        return {
+          name: slot?.localized_name || slot?.name || "",
+          type: slot?.type,
+          label: slot?.label,
+          connected: !!link,
+          isWidget: !!slot?.widget,
+          sourceId: link ? link.origin_id ?? link[1] : null,
+          sourceSlot: link ? link.origin_slot ?? link[2] : null,
+        };
+      }),
+      outputs: (n.outputs || []).map((slot) => ({
+        name: slot?.localized_name || slot?.name || "",
+        type: slot?.type,
+        label: slot?.label,
+        connected: !!slot?.links?.length,
+      })),
+    };
+  });
+  const res = computeRenames(model, opts);
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  let labels = 0;
+  for (const [id, title] of res.titles) byId.get(id).title = title;
+  for (const [side, map] of [["inputs", res.inputs], ["outputs", res.outputs]]) {
+    for (const [id, list] of map) {
+      const slots = byId.get(id)[side] || [];
+      list.forEach((label, i) => {
+        if (label === undefined || !slots[i]) return;
+        setSlotLabel(slots[i], label);
+        labels++;
+      });
+    }
+  }
+  graph.setDirtyCanvas?.(true, true);
+  return { titles: res.titles.size, labels };
+}
+
 // --- apply --------------------------------------------------------------------
 
 // The animation currently running, if any. Holding the change tracker open while it
@@ -261,7 +378,7 @@ export function prettifyNodes(app, graph, nodes, opts) {
   cancelAnimation();
   const model = readModel(graph, nodes);
   if (!model.nodes.length) return { moved: 0, groups: 0 };
-  const res = computeLayout(model, opts);
+  const res = computeLayout(model, opts.paletteColors?.group ? { ...opts, stageGroupColors: opts.paletteColors.group } : opts);
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const resized = opts.widthMode !== "keep" || opts.heightMode !== "keep";
 
@@ -276,7 +393,7 @@ export function prettifyNodes(app, graph, nodes, opts) {
     if (resized && !n.flags?.collapsed) setNodeSize(n, [r.w, r.h]);
     moves.push({ n, from: [n.pos[0], n.pos[1]], to: [r.x, r.y] });
     if (opts.colorNodes === "stage") {
-      const c = STAGE_NODE_COLORS[r.stage];
+      const c = (opts.paletteColors?.node ?? STAGE_NODE_COLORS)[r.stage];
       if (c) {
         n.color = c.color;
         n.bgcolor = c.bgcolor;
@@ -310,6 +427,19 @@ export function prettifyNodes(app, graph, nodes, opts) {
     if (ng.color) g.color = ng.color;
     graph.add(g);
     setGroupRect(g, ng);
+  }
+
+  // Passes that need final positions (reroute cleanup) run with nodes placed, before any animation.
+  if (opts.onPlaced) {
+    for (const m of moves) {
+      m.n.pos[0] = m.to[0];
+      m.n.pos[1] = m.to[1];
+    }
+    try {
+      opts.onPlaced();
+    } catch (err) {
+      console.warn("[Prettifier] post-layout pass failed", err);
+    }
   }
 
   let released = false;

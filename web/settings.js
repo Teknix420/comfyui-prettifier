@@ -2,6 +2,9 @@
 // One list drives both the ComfyUI Settings panel and the Prettifier dialog.
 
 import { DEFAULTS } from "./layout.js";
+import { RENAME_DEFAULTS } from "./rename.js";
+import { LINT_DEFAULTS } from "./lint.js";
+import { themeSettingDefinition } from "./themes.js";
 
 export const PREFIX = "Prettifier.";
 
@@ -77,12 +80,52 @@ export const OPTIONS = [
   combo("componentPacking", "Placement", "Separate sections", [opt("vertical", "Stack vertically"), opt("horizontal", "Side by side")]),
   bool("respectPinned", "Placement", "Never move pinned nodes"),
 
+  // Links
+  combo("rerouteMode", "Links", "Reroute dots", [
+    opt("auto", "Auto (clear old dots, add new ones around nodes)"),
+    opt("remove", "Remove all reroute dots"),
+    opt("keep", "Leave reroute dots alone"),
+  ], "Auto routes long links above or below the nodes they would otherwise run through."),
+  slider("rerouteClearance", "Links", "Clearance around nodes", 4, 80, 2, "How far a rerouted link stays from the nodes it avoids."),
+  slider("rerouteMinLength", "Links", "Only reroute links longer than", 0, 2000, 50, "Short links are left straight even if they clip a node."),
+
+  // Nodes
+  combo("collapseMode", "Nodes", "Collapse nodes", [opt("keep", "Don't change"), opt("collapse", "Collapse matching nodes"), opt("expand", "Expand everything")]),
+  text("collapseMatch", "Nodes", "Collapse nodes matching", "Regular expression matched against node type, title and pipeline stage. Example: Loader|Primitive|Utilities"),
+  combo("inactiveStyle", "Nodes", "Muted and bypassed nodes", [opt("keep", "Don't change"), opt("dim", "Dim"), opt("collapse", "Collapse"), opt("both", "Dim and collapse")]),
+  combo("subgraphMode", "Nodes", "Subgraphs", [opt("all", "Prettify inside every subgraph too"), opt("current", "Only the graph I'm looking at")], "Applies when prettifying a whole workflow."),
+
+  // Notes
+  bool("autoNote", "Notes", "Keep a summary note up to date", "Adds a note listing models, LoRAs, resolution, sampler settings and seeds, and refreshes it on every prettify."),
+  combo("noteStyle", "Notes", "Summary note type", [opt("markdown", "Markdown note"), opt("plain", "Plain note")]),
+  text("noteTitle", "Notes", "Summary note title"),
+  bool("noteIncludePrompts", "Notes", "Include prompt text"),
+
   // Appearance
+  combo("palette", "Appearance", "Color palette", [opt("default", "ComfyUI classic"), opt("pastel", "Pastel"), opt("vivid", "Vivid"), opt("mono", "Monochrome"), opt("ocean", "Ocean"), opt("custom", "Custom (JSON below)")], "Colors used for stage-colored groups and nodes."),
+  text("customPalette", "Appearance", "Custom palette JSON", 'Stage name to colors: {"Models": ["#group", "#nodeTitle", "#nodeBody"], "Prompt": "#groupOnly"}. Stages: Models, Inputs, Prompt, Sampling, Latent, Image, Mask, Output, Utilities, Other.'),
   combo("colorNodes", "Appearance", "Node colors", [opt("keep", "Don't change"), opt("stage", "Color by pipeline stage"), opt("clear", "Reset to default")]),
   combo("linkStyle", "Appearance", "Link style", [opt("keep", "Don't change"), opt("spline", "Spline"), opt("linear", "Linear"), opt("straight", "Straight (right angles)")]),
   bool("animate", "Appearance", "Animate node movement"),
   slider("animationMs", "Appearance", "Animation duration (ms)", 0, 2000, 50),
   bool("fitView", "Appearance", "Zoom to fit afterwards"),
+
+  // Renaming
+  bool("renameOnPrettify", "Renaming", "Apply renaming when prettifying", "When off, renaming only happens through the 'Rename nodes and connectors' command."),
+  combo("nodeTitleMode", "Renaming", "Node titles", [opt("keep", "Don't change"), opt("default", "Reset to default names"), opt("template", "Use template")]),
+  text("nodeTitleTemplate", "Renaming", "Node title template", "Tokens: {title} current title (use {default} instead if you re-run often, so prefixes don't stack), {default} default name, {type}, {id}, {n} number among nodes of the same type, {stage}, {category}, {group}, {widget:NAME} a widget's value (e.g. {widget:ckpt_name}). [Bracketed parts] are dropped when a token inside is empty. Example: {stage}: {default}[ ({widget:sampler_name})]"),
+  combo("nodeTitleApplyTo", "Renaming", "Rename which nodes", [opt("all", "All nodes"), opt("untouched", "Only nodes still using their default name"), opt("renamed", "Only nodes I renamed")]),
+  text("nodeTypeFilter", "Renaming", "Only node types matching", "Regular expression matched against the node type or default name. Empty = every node. Example: Sampler|Loader"),
+  combo("nodeTitleCase", "Renaming", "Node title capitalization", [opt("none", "Don't change"), opt("title", "Title Case"), opt("upper", "UPPERCASE"), opt("lower", "lowercase")]),
+  combo("nodeNumbering", "Renaming", "Number node titles", [opt("none", "No"), opt("duplicates", "Only duplicates (KSampler 1, KSampler 2)"), opt("all", "Every renamed node")], "Numbers follow the flow, left to right then top to bottom."),
+  text("nodeTitleRules", "Renaming", "Node title find/replace rules", "find => replace, separated by ; (find is a regular expression). Prefix with a type filter using :: to limit a rule. Example: \\(Prompt\\) => ; CLIPTextEncode :: ^CLIP Text Encode => Prompt"),
+  combo("slotLabelMode", "Renaming", "Connector labels", [opt("keep", "Don't change"), opt("reset", "Reset to default names"), opt("type", "Show data type (MODEL, LATENT…)"), opt("template", "Use template")]),
+  text("slotLabelTemplate", "Renaming", "Connector label template", "Tokens: {name} connector name, {label} current label, {type} data type, {node} this node's title, {source} title of the node feeding this input, {sourceSlot} name of that node's output. Example: {name}[ ← {source}]"),
+  combo("slotApplyTo", "Renaming", "Rename which connectors", [opt("both", "Inputs and outputs"), opt("inputs", "Inputs only"), opt("outputs", "Outputs only")]),
+  bool("slotOnlyConnected", "Renaming", "Only connected connectors"),
+  bool("slotIncludeWidgets", "Renaming", "Also relabel widget inputs", "Widgets (seed, steps, text…) double as inputs. When off, they are only relabelled if something is connected to them."),
+  combo("slotLabelCase", "Renaming", "Connector capitalization", [opt("none", "Don't change"), opt("title", "Title Case (latent_image → Latent Image)"), opt("upper", "UPPERCASE"), opt("lower", "lowercase")]),
+  text("slotLabelRules", "Renaming", "Connector find/replace rules", "find => replace, separated by ; . Prefix with a data type filter using :: . Example: CONDITIONING :: ^positive$ => + prompt; _ => (space)"),
 
   // Behavior
   combo("scope", "Behavior", "Prettify what", [
@@ -90,7 +133,20 @@ export const OPTIONS = [
     opt("all", "Always the whole workflow"),
     opt("selection", "Only selected nodes"),
   ]),
+  combo("autoRun", "Behavior", "Prettify automatically", [opt("off", "Never"), opt("load", "When a workflow is opened"), opt("save", "When a workflow is saved"), opt("both", "On open and on save")], "On open is skipped when the workflow is still arranged the way Prettifier left it."),
+  bool("rememberWorkflowOptions", "Behavior", "Remember options inside each workflow", "Stores the options a workflow was prettified with in the workflow file."),
+  bool("useWorkflowOptions", "Behavior", "Use a workflow's remembered options", "When a workflow carries remembered options, quick prettify uses them instead of your global ones."),
   bool("showToast", "Behavior", "Show a summary message"),
+
+  // Lint
+  bool("lintOnPrettify", "Lint", "Check the workflow when prettifying", "Adds the number of findings to the summary message."),
+  bool("lintMissing", "Lint", "Missing inputs, models and node types"),
+  bool("lintUnused", "Lint", "Nodes whose outputs are never used"),
+  bool("lintDuplicates", "Lint", "Duplicate loaders"),
+  bool("lintValues", "Lint", "Suspicious widget values"),
+  bool("lintInactive", "Lint", "Muted and bypassed nodes"),
+  slider("lintMaxSteps", "Lint", "Flag steps above", 10, 500, 5),
+  slider("lintMaxCfg", "Lint", "Flag CFG above", 1, 100, 1),
 ];
 
 export const EXTRA_DEFAULTS = {
@@ -101,17 +157,42 @@ export const EXTRA_DEFAULTS = {
   fitView: false,
   scope: "auto",
   showToast: true,
+  rerouteMode: "auto",
+  rerouteClearance: 16,
+  rerouteMinLength: 300,
+  collapseMode: "keep",
+  collapseMatch: "Loader|Primitive",
+  inactiveStyle: "keep",
+  subgraphMode: "all",
+  autoNote: false,
+  noteStyle: "markdown",
+  noteTitle: "Workflow summary",
+  noteIncludePrompts: false,
+  palette: "default",
+  customPalette: "",
+  autoRun: "off",
+  rememberWorkflowOptions: true,
+  useWorkflowOptions: true,
 };
 
-export const ALL_DEFAULTS = { ...DEFAULTS, ...EXTRA_DEFAULTS };
+export const ALL_DEFAULTS = { ...DEFAULTS, ...RENAME_DEFAULTS, ...LINT_DEFAULTS, ...EXTRA_DEFAULTS };
 
-export const SECTIONS = ["Layout", "Spacing", "Sizing", "Groups", "Placement", "Appearance", "Behavior"];
+export const SECTIONS = ["Layout", "Spacing", "Sizing", "Groups", "Placement", "Links", "Nodes", "Renaming", "Notes", "Appearance", "Behavior", "Lint"];
 
 export const PRESETS = {
   Default: {},
   Compact: { hGap: 40, vGap: 20, componentGap: 80, groupPadding: 10, widthMode: "fit", groupBy: "none", groupFontSize: 18 },
   Spacious: { hGap: 160, vGap: 70, componentGap: 260, groupPadding: 36, widthMode: "column" },
-  Presentation: { groupBy: "stage", minGroupSize: 1, colorNodes: "stage", groupColor: "stage", hGap: 120, vGap: 50, linkStyle: "spline", fitView: true },
+  Presentation: { groupBy: "stage", minGroupSize: 1, colorNodes: "stage", groupColor: "stage", palette: "pastel", hGap: 120, vGap: 50, linkStyle: "spline", fitView: true, autoNote: true },
+  "Clean names": {
+    nodeTitleMode: "template",
+    nodeTitleTemplate: "{default}",
+    nodeTitleApplyTo: "untouched",
+    nodeNumbering: "duplicates",
+    slotLabelMode: "template",
+    slotLabelTemplate: "{name}",
+    slotLabelCase: "title",
+  },
   "Tidy only": { widthMode: "keep", heightMode: "keep", groupBy: "existing", colorNodes: "keep", layering: "early" },
 };
 
@@ -121,6 +202,10 @@ export function settingId(key) {
 
 /** Setting definitions for app.registerExtension({ settings }). */
 export function settingDefinitions(onChange) {
+  return [themeSettingDefinition(), ...optionDefinitions(onChange)];
+}
+
+function optionDefinitions(onChange) {
   return OPTIONS.map((o) => {
     const def = {
       id: settingId(o.key),

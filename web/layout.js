@@ -1021,11 +1021,11 @@ export function computeLayout(model, userOpts = {}) {
       case "single":
         return o.groupSingleColor;
       case "stage":
-        return STAGE_GROUP_COLORS[majorityStage(ids)];
+        return (o.stageGroupColors ?? STAGE_GROUP_COLORS)[majorityStage(ids)];
       case "none":
         return existing ?? undefined;
       default:
-        return existing ?? STAGE_GROUP_COLORS[majorityStage(ids)];
+        return existing ?? (o.stageGroupColors ?? STAGE_GROUP_COLORS)[majorityStage(ids)];
     }
   };
 

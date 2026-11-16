@@ -1,13 +1,14 @@
 // ComfyUI Prettifier - options dialog with live preview.
 
 import { OPTIONS, SECTIONS, PRESETS, ALL_DEFAULTS, readOptions, setOption } from "./settings.js";
-import { activeGraph, takeSnapshot, restoreSnapshot, cancelAnimation, changeTracker } from "./graph.js";
-import { prettify } from "./core.js";
+import { activeGraph, cancelAnimation, changeTracker } from "./graph.js";
+import { prettify, effectiveOptions, snapshotAll, restoreAll, toast } from "./core.js";
+import { loadThemes, saveThemes, exportTheme, importTheme } from "./themes.js";
 
 const STYLE_ID = "prettifier-dialog-style";
 const CSS = `
 .pf-overlay{position:fixed;inset:0;z-index:10000;display:flex;align-items:flex-start;justify-content:flex-end;pointer-events:none}
-.pf-dialog{pointer-events:auto;margin:60px 16px 16px;width:420px;max-width:calc(100vw - 32px);max-height:calc(100vh - 80px);display:flex;flex-direction:column;
+.pf-dialog{pointer-events:auto;margin:60px 16px 16px;width:460px;max-width:calc(100vw - 32px);max-height:calc(100vh - 80px);display:flex;flex-direction:column;
   background:var(--comfy-menu-bg,#202020);color:var(--fg-color,#ddd);border:1px solid var(--border-color,#444);border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.5);font:13px/1.4 system-ui,sans-serif}
 .pf-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--border-color,#444);cursor:move;user-select:none}
 .pf-head h3{margin:0;font-size:15px;flex:1}
@@ -31,25 +32,36 @@ const CSS = `
 .pf-btn:hover{filter:brightness(1.2)}
 .pf-btn.primary{background:#3f789e;border-color:#3f789e;color:#fff}
 .pf-spacer{flex:1}
+.pf-lint{list-style:none;margin:0;padding:0}
+.pf-lint li{display:grid;grid-template-columns:70px 1fr;gap:8px;padding:7px 4px;border-bottom:1px dashed rgba(127,127,127,.15);cursor:pointer;border-radius:4px}
+.pf-lint li:hover{background:rgba(127,127,127,.12)}
+.pf-sev{font-size:11px;font-weight:600;text-transform:uppercase;border-radius:4px;padding:2px 6px;align-self:start;text-align:center}
+.pf-sev.error{background:#8a221b;color:#fff}.pf-sev.warning{background:#857000;color:#fff}.pf-sev.info{background:#21608a;color:#fff}
+.pf-lint b{display:block}.pf-muted{opacity:.7}
+.pf-btn.sm{padding:3px 8px;font-size:12px}
+.pf-themes input{background:var(--comfy-menu-bg,#202020);color:inherit;border:1px solid var(--border-color,#444);border-radius:5px;padding:3px 6px;font:inherit}
 .pf-check{display:flex;gap:6px;align-items:center;cursor:pointer}
 `;
 
 let open = null;
+
+export function ensureStyle() {
+  if (document.getElementById(STYLE_ID)) return;
+  const st = document.createElement("style");
+  st.id = STYLE_ID;
+  st.textContent = CSS;
+  document.head.appendChild(st);
+}
 
 export function openDialog(app) {
   if (open) {
     open.focus();
     return;
   }
-  if (!document.getElementById(STYLE_ID)) {
-    const st = document.createElement("style");
-    st.id = STYLE_ID;
-    st.textContent = CSS;
-    document.head.appendChild(st);
-  }
+  ensureStyle();
 
-  const values = readOptions(app);
-  const initial = { ...values };
+  const values = effectiveOptions(app);
+  const initial = readOptions(app); // global values, restored on Cancel
   // Keep previews out of the undo history; one entry is recorded when the dialog closes.
   const tracker = changeTracker(app);
   tracker?.beforeChange?.();
@@ -95,21 +107,74 @@ export function openDialog(app) {
   head.addEventListener("pointerup", () => (drag = null));
 
   // Top bar: preset, scope, live preview
-  const presetSel = el("select", { title: "Load a preset (changes your saved options)" }, el("option", { value: "" }, "Preset…"), ...Object.keys(PRESETS).map((p) => el("option", { value: p }, p)));
-  presetSel.addEventListener("change", async () => {
-    const p = PRESETS[presetSel.value];
-    presetSel.value = "";
-    if (!p) return;
-    const next = { ...ALL_DEFAULTS, ...p };
+  const applyValues = async (next) => {
     for (const o of OPTIONS) {
-      if (values[o.key] !== next[o.key]) {
+      if (next[o.key] !== undefined && values[o.key] !== next[o.key]) {
         values[o.key] = next[o.key];
         await setOption(app, o.key, next[o.key]);
       }
     }
     renderBody();
     schedulePreview();
+  };
+  let themes = loadThemes(app);
+  const presetSel = el("select", { title: "Load a preset or one of your saved themes" });
+  const fillPresets = () => {
+    presetSel.replaceChildren(
+      el("option", { value: "" }, "Preset / theme…"),
+      el("optgroup", { label: "Presets" }, ...Object.keys(PRESETS).map((p) => el("option", { value: "p:" + p }, p))),
+      ...(Object.keys(themes).length ? [el("optgroup", { label: "My themes" }, ...Object.keys(themes).map((t) => el("option", { value: "t:" + t }, t)))] : [])
+    );
+  };
+  fillPresets();
+  presetSel.addEventListener("change", async () => {
+    const v = presetSel.value;
+    presetSel.value = "";
+    if (!v) return;
+    const src = v.startsWith("p:") ? PRESETS[v.slice(2)] : themes[v.slice(2)];
+    if (src) await applyValues({ ...ALL_DEFAULTS, ...src });
   });
+
+  // Theme tools: save current options under a name, export, import, delete.
+  const themeName = el("input", { type: "text", placeholder: "Theme name", style: "width:110px" });
+  const diffFromDefaults = () => {
+    const d = {};
+    for (const o of OPTIONS) if (values[o.key] !== ALL_DEFAULTS[o.key]) d[o.key] = values[o.key];
+    return d;
+  };
+  const themeBar = el(
+    "div",
+    { class: "pf-bar pf-themes" },
+    themeName,
+    el("button", { class: "pf-btn sm", title: "Save the current options as a theme", onclick: async () => {
+      const name = themeName.value.trim();
+      if (!name) return themeName.focus();
+      themes = { ...themes, [name]: diffFromDefaults() };
+      await saveThemes(app, themes);
+      fillPresets();
+      toast(app, "success", "Theme saved", name);
+    } }, "Save"),
+    el("button", { class: "pf-btn sm", title: "Delete the theme with this name", onclick: async () => {
+      const name = themeName.value.trim();
+      if (!themes[name]) return themeName.focus();
+      themes = { ...themes };
+      delete themes[name];
+      await saveThemes(app, themes);
+      fillPresets();
+      toast(app, "info", "Theme deleted", name);
+    } }, "Delete"),
+    el("span", { class: "pf-spacer" }),
+    el("button", { class: "pf-btn sm", title: "Download the current options as a theme file", onclick: () => exportTheme(themeName.value.trim() || "prettifier-theme", diffFromDefaults()) }, "Export"),
+    el("button", { class: "pf-btn sm", title: "Load a theme file", onclick: async () => {
+      const t = await importTheme(ALL_DEFAULTS);
+      if (!t) return toast(app, "error", "Prettifier", "That file is not a Prettifier theme.");
+      themeName.value = t.name;
+      themes = { ...themes, [t.name]: t.options };
+      await saveThemes(app, themes);
+      fillPresets();
+      await applyValues({ ...ALL_DEFAULTS, ...t.options });
+    } }, "Import")
+  );
   const scopeSel = el("select", { title: "What to rearrange" }, el("option", { value: "auto" }, "Auto scope"), el("option", { value: "all" }, "Whole workflow"), el("option", { value: "selection" }, "Selection only"));
   scopeSel.value = scope;
   scopeSel.addEventListener("change", () => {
@@ -123,7 +188,7 @@ export function openDialog(app) {
     if (live) schedulePreview();
     else revert();
   });
-  dialog.append(el("div", { class: "pf-bar" }, presetSel, scopeSel, el("span", { class: "pf-spacer" }), el("label", { class: "pf-check", title: "Re-arrange the canvas as you change options" }, liveBox, "Live preview")));
+  dialog.append(el("div", { class: "pf-bar" }, presetSel, scopeSel, el("span", { class: "pf-spacer" }), el("label", { class: "pf-check", title: "Re-arrange the canvas as you change options" }, liveBox, "Live preview")), themeBar);
 
   // Tabs + body
   const tabs = el("div", { class: "pf-tabs" });
@@ -187,8 +252,7 @@ export function openDialog(app) {
   // Footer
   const resetBtn = el("button", { class: "pf-btn", title: "Reset every option to its default" }, "Reset defaults");
   resetBtn.addEventListener("click", () => {
-    presetSel.value = "Default";
-    presetSel.dispatchEvent(new Event("change"));
+    applyValues({ ...ALL_DEFAULTS });
   });
   const cancelBtn = el("button", { class: "pf-btn" }, "Cancel");
   cancelBtn.addEventListener("click", () => cancel());
@@ -201,7 +265,7 @@ export function openDialog(app) {
     clearTimeout(previewTimer);
     cancelAnimation();
     if (snapshot) {
-      restoreSnapshot(snapshot);
+      restoreAll(snapshot);
       app.canvas?.setDirty?.(true, true);
     }
   }
@@ -210,7 +274,7 @@ export function openDialog(app) {
     clearTimeout(previewTimer);
     previewTimer = setTimeout(() => {
       const graph = activeGraph(app);
-      if (!snapshot || snapshot.graph !== graph) snapshot = takeSnapshot(graph);
+      if (!snapshot || snapshot.graph !== graph) snapshot = snapshotAll(app, graph);
       else revert();
       prettify(app, { scope, overrides: { ...values, fitView: false }, animate: false, recordUndo: false, quiet: true });
     }, 120);
@@ -225,7 +289,7 @@ export function openDialog(app) {
     revert();
     snapshot = null;
     // Cancel also discards option changes made in the dialog.
-    for (const o of OPTIONS) if (values[o.key] !== initial[o.key]) setOption(app, o.key, initial[o.key]);
+    for (const o of OPTIONS) if (readOptions(app)[o.key] !== initial[o.key]) setOption(app, o.key, initial[o.key]);
     close();
   }
   const onKey = (e) => {

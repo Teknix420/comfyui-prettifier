@@ -3,7 +3,10 @@
 
 import { app } from "../../scripts/app.js";
 import { settingDefinitions } from "./settings.js";
-import { prettify, undoLast } from "./core.js";
+import { prettify, undoLast, renameOnly, reroutesOnly, summaryNote, toast } from "./core.js";
+import { openLintReport } from "./lintdialog.js";
+import { forgetWorkflowOptions, isStampCurrent } from "./extras.js";
+import { getOption } from "./settings.js";
 import { openDialog } from "./dialog.js";
 import { alignNodes, fitGroupsToNodes, fitView, activeGraph } from "./graph.js";
 
@@ -27,6 +30,15 @@ const commands = [
   cmd("Prettify", "Prettify workflow", () => prettify(app), "pi pi-sparkles"),
   cmd("PrettifyAll", "Prettify whole workflow", () => prettify(app, { scope: "all" }), "pi pi-sitemap"),
   cmd("PrettifySelection", "Prettify selected nodes", () => prettify(app, { scope: "selection" }), "pi pi-th-large"),
+  cmd("Rename", "Rename nodes and connectors", () => renameOnly(app), "pi pi-tag"),
+  cmd("Lint", "Lint workflow", () => openLintReport(app), "pi pi-check-circle"),
+  cmd("SummaryNote", "Create or update summary note", () => summaryNote(app), "pi pi-file-edit"),
+  cmd("Reroutes.Auto", "Reroute links around nodes", () => reroutesOnly(app, "auto"), "pi pi-share-alt"),
+  cmd("Reroutes.Remove", "Remove all reroute dots", () => reroutesOnly(app, "remove"), "pi pi-times"),
+  cmd("ForgetWorkflowOptions", "Forget this workflow's remembered options", () => {
+    forgetWorkflowOptions(app);
+    toast(app, "info", "Prettifier", "This workflow will use your global options again.");
+  }),
   cmd("OpenDialog", "Prettifier options…", () => openDialog(app), "pi pi-sliders-h"),
   cmd("Undo", "Undo last prettify", () => undoLast(app), "pi pi-undo"),
   cmd("FitGroups", "Fit groups to their nodes", () => fitGroupsToNodes(app), "pi pi-stop"),
@@ -38,6 +50,11 @@ function menuItems() {
   return [
     { content: "✨ Prettify workflow", callback: () => prettify(app) },
     { content: "Prettify selected nodes", callback: () => prettify(app, { scope: "selection" }) },
+    { content: "Rename nodes and connectors", callback: () => renameOnly(app) },
+    { content: "Lint workflow", callback: () => openLintReport(app) },
+    { content: "Create or update summary note", callback: () => summaryNote(app) },
+    { content: "Reroute links around nodes", callback: () => reroutesOnly(app, "auto") },
+    { content: "Remove all reroute dots", callback: () => reroutesOnly(app, "remove") },
     { content: "Prettifier options…", callback: () => openDialog(app) },
     { content: "Undo last prettify", callback: () => undoLast(app) },
     { content: "Fit groups to their nodes", callback: () => fitGroupsToNodes(app) },
@@ -51,6 +68,30 @@ function menuItems() {
 
 const canvasMenu = () => [null, { content: "Prettifier", has_submenu: true, submenu: { options: menuItems() } }];
 
+let autoBusy = false;
+
+/** Prettify on save (optional): wrap ComfyUI's save commands. */
+function hookSave() {
+  const list = app.extensionManager?.command?.commands;
+  if (!Array.isArray(list)) return;
+  for (const c of list) {
+    if (!/^Comfy\.(SaveWorkflow|SaveWorkflowAs)$/.test(c.id) || c.__prettifierWrapped) continue;
+    const orig = c.function;
+    c.function = async function (...args) {
+      const mode = getOption(app, "autoRun");
+      if ((mode === "save" || mode === "both") && !isStampCurrent(app)) {
+        try {
+          prettify(app, { scope: "all", animate: false, quiet: true });
+        } catch (err) {
+          console.warn("[Prettifier] prettify on save failed", err);
+        }
+      }
+      return orig.apply(this, args);
+    };
+    c.__prettifierWrapped = true;
+  }
+}
+
 app.registerExtension({
   name: "Comfy.Prettifier",
   settings: settingDefinitions(),
@@ -62,7 +103,7 @@ app.registerExtension({
   menuCommands: [
     {
       path: ["Extensions", "Prettifier"],
-      commands: ["Prettifier.Prettify", "Prettifier.PrettifySelection", "Prettifier.OpenDialog", "Prettifier.Undo", "Prettifier.FitGroups"],
+      commands: ["Prettifier.Prettify", "Prettifier.PrettifySelection", "Prettifier.Rename", "Prettifier.Lint", "Prettifier.SummaryNote", "Prettifier.Reroutes.Auto", "Prettifier.Reroutes.Remove", "Prettifier.OpenDialog", "Prettifier.Undo", "Prettifier.FitGroups", "Prettifier.ForgetWorkflowOptions"],
     },
     { path: ["Extensions", "Prettifier", "Align selected"], commands: ALIGN.map(([m]) => "Prettifier.Align." + m) },
   ],
@@ -72,7 +113,26 @@ app.registerExtension({
     return canvasMenu();
   },
 
+  // Prettify on open (optional). Skipped during undo/redo and when the arrangement
+  // is still the one Prettifier produced.
+  afterConfigureGraph() {
+    const mode = getOption(app, "autoRun");
+    if (mode !== "load" && mode !== "both") return;
+    const tracker = app.extensionManager?.workflow?.activeWorkflow?.changeTracker;
+    if (tracker?._restoringState || autoBusy) return;
+    setTimeout(() => {
+      if (isStampCurrent(app)) return;
+      autoBusy = true;
+      try {
+        prettify(app, { scope: "all", animate: false, quiet: true });
+      } finally {
+        autoBusy = false;
+      }
+    }, 50);
+  },
+
   setup() {
+    hookSave();
     // Older frontends without getCanvasMenuItems / extension commands: patch the canvas menu.
     if (app.extensionManager?.command) return;
     const LGraphCanvas = globalThis.LGraphCanvas;
