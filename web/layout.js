@@ -97,6 +97,8 @@ export const STAGE_NODE_COLORS = {
 };
 
 export function stageOf(n) {
+  // A helper node (a variable) counts as part of the stage of the node it serves.
+  if (n.stageLike) return stageOf(n.stageLike);
   const t = String(n.type || "").toLowerCase();
   const c = String(n.category || "").toLowerCase();
   if (n.isNote) return "Utilities";

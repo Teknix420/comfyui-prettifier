@@ -12,6 +12,8 @@ import {
   notifyChanged,
   cancelAnimation,
   graphNodes,
+  linkGeometry,
+  selectedNodes,
   activeGraph,
 } from "./graph.js";
 import {
@@ -27,6 +29,7 @@ import {
   placeSubgraphIO,
   runLint,
 } from "./extras.js";
+import { pickVariableLinks, linksToVariables, variablesToLinks, isVariableNode, isSetNode, isGetNode, variableName } from "./variables.js";
 import { isSubgraph, subgraphsInnerFirst, renameSubgraphSlots, reorderSubgraphSlots, snapshotSubgraphIO, restoreSubgraphIO } from "./subgraphs.js";
 
 let lastSnapshot = null;
@@ -79,6 +82,13 @@ export function restoreAll(snap) {
     }
   }
   for (const part of snap.parts) {
+    // Variables created since the snapshot become ordinary links again.
+    try {
+      const known = new Set(part.main.nodes.map((s) => s.node));
+      variablesToLinks(part.main.graph, (n) => !known.has(n));
+    } catch (err) {
+      console.warn("[Prettifier] could not restore links replaced by variables", err);
+    }
     restoreSnapshot(part.main);
     try {
       restoreReroutes(part.main.graph, part.reroutes);
@@ -91,7 +101,7 @@ export function restoreAll(snap) {
 // --- prettify -------------------------------------------------------------------
 
 function runPasses(app, graph, nodes, o, { isSelection, noHistory, isChild }) {
-  const stats = { moved: 0, groups: 0, renamed: { titles: 0, labels: 0 }, collapsed: 0, reroutes: { removed: 0, added: 0 } };
+  const stats = { moved: 0, groups: 0, renamed: { titles: 0, labels: 0 }, collapsed: 0, reroutes: { removed: 0, added: 0 }, variables: 0 };
   stats.collapsed = applyCollapseRules(nodes, o);
   if (o.autoNote && !isSelection && !isChild) {
     const r = upsertSummaryNote(graph, o);
@@ -102,6 +112,14 @@ function runPasses(app, graph, nodes, o, { isSelection, noHistory, isChild }) {
     const io = !isSelection && isSubgraph(graph) ? renameSubgraphSlots(app, graph, o) : 0;
     stats.renamed = renameNodes(graph, nodes, renameOpts(o));
     stats.renamed.labels += io;
+  }
+  if (o.variableMode !== "off") {
+    // Judge links by where the layout is about to put them, swap the long ones for
+    // variables, then lay everything out with the new nodes in place.
+    const geo = linkGeometry(graph, nodes.filter((n) => !isVariableNode(n)), { ...o, isSelection });
+    const made = linksToVariables(graph, pickVariableLinks(geo.links, geo.boxes, o), o, "over");
+    if (made.nodes.length) nodes = isSelection ? [...nodes, ...made.nodes] : graphNodes(graph);
+    stats.variables = made.links;
   }
   const r = prettifyNodes(app, graph, nodes, {
     ...o,
@@ -149,7 +167,7 @@ export function prettify(app, { scope, overrides, animate, recordUndo = true, qu
   try {
     // Subgraphs go first (innermost first): reordering their connectors changes the
     // subgraph nodes that the outer layout then lines up.
-    const child = { moved: 0, groups: 0, labels: 0, count: 0 };
+    const child = { moved: 0, groups: 0, labels: 0, variables: 0, count: 0 };
     const withSubgraphs = o.subgraphMode === "all" && !isSelection;
     if (withSubgraphs) {
       for (const sg of subgraphsInnerFirst(app)) {
@@ -160,6 +178,7 @@ export function prettify(app, { scope, overrides, animate, recordUndo = true, qu
         child.moved += s.moved;
         child.groups += s.groups;
         child.labels += s.renamed.labels;
+        child.variables += s.variables;
         child.count++;
       }
     }
@@ -167,6 +186,7 @@ export function prettify(app, { scope, overrides, animate, recordUndo = true, qu
     stats.moved += child.moved;
     stats.groups += child.groups;
     stats.renamed.labels += child.labels;
+    stats.variables += child.variables;
     if (child.count) stats.subgraphs = child.count;
     if (o.subgraphSlotOrder === "outside" && !isSelection) {
       for (const sg of withSubgraphs ? subgraphsInnerFirst(app) : isSubgraph(graph) ? [graph] : []) {
@@ -195,6 +215,7 @@ export function prettify(app, { scope, overrides, animate, recordUndo = true, qu
     ];
     if (stats.renamed.titles || stats.renamed.labels) parts.push(`${stats.renamed.titles} renamed, ${stats.renamed.labels} connector labels`);
     if (stats.reroutes.added || stats.reroutes.removed) parts.push(`${stats.reroutes.added} reroute dots added, ${stats.reroutes.removed} removed`);
+    if (stats.variables) parts.push(`${stats.variables} link${stats.variables === 1 ? "" : "s"} replaced by variables`);
     if (stats.subgraphs) parts.push(`${stats.subgraphs} subgraph${stats.subgraphs === 1 ? "" : "s"}`);
     if (issues?.length) parts.push(`${issues.length} lint finding${issues.length === 1 ? "" : "s"} (run "Lint workflow")`);
     toast(app, "success", "Workflow prettified", parts.join(", ") + ".");
@@ -241,6 +262,46 @@ export function reroutesOnly(app, mode) {
   notifyChanged(app, graph);
   app.canvas?.setDirty?.(true, true);
   if (o.showToast) toast(app, "success", "Reroutes", `${r.added} dots added, ${r.removed} removed.`);
+  return r;
+}
+
+/** Replace long or blocked links by variables, judged by where the nodes are now. */
+export function linksToVariablesNow(app) {
+  const o = effectiveOptions(app);
+  const { graph, nodes, isSelection } = resolveScope(app, o.scope);
+  if (!graph || !nodes.length) return null;
+  const mode = o.variableMode === "off" ? "long" : o.variableMode;
+  const geo = linkGeometry(graph, nodes.filter((n) => !isVariableNode(n)));
+  const ids = pickVariableLinks(geo.links, geo.boxes, { ...o, variableMode: mode });
+  if (!ids.length) {
+    toast(app, "info", "Prettifier", mode === "long" ? `No links longer than ${o.variableMinLength} here${isSelection ? " (selection)" : ""}.` : "No long or blocked links here.");
+    return null;
+  }
+  lastSnapshot = snapshotAll(app, graph);
+  const r = linksToVariables(graph, ids, o, "beside");
+  notifyChanged(app, graph);
+  app.canvas?.setDirty?.(true, true);
+  if (o.showToast) toast(app, "success", "Variables", `${r.links} link${r.links === 1 ? "" : "s"} replaced. Prettify to tidy the new nodes.`);
+  return r;
+}
+
+/** Turn variables back into links: the selected Set / Get nodes, or all of them. */
+export function variablesToLinksNow(app) {
+  const o = effectiveOptions(app);
+  const graph = activeGraph(app);
+  const picked = new Set(selectedNodes(app).filter(isVariableNode));
+  // Selecting a Set node means its Get nodes too.
+  const names = new Set([...picked].filter(isSetNode).map((n) => variableName(n).toLowerCase()));
+  for (const n of graphNodes(graph)) if (isGetNode(n) && names.has(variableName(n).toLowerCase())) picked.add(n);
+  const r = variablesToLinks(graph, picked.size ? (n) => picked.has(n) : undefined);
+  if (!r.removed) {
+    toast(app, "info", "Prettifier", "There are no Prettifier variables to turn back into links.");
+    return null;
+  }
+  lastSnapshot = null;
+  notifyChanged(app, graph);
+  app.canvas?.setDirty?.(true, true);
+  if (o.showToast) toast(app, "success", "Variables", `${r.links} link${r.links === 1 ? "" : "s"} restored.`);
   return r;
 }
 

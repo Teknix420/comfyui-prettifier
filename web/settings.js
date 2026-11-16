@@ -1,6 +1,7 @@
 // ComfyUI Prettifier - option schema.
 // One list drives both the ComfyUI Settings panel and the Prettifier dialog.
 
+import { VARIABLE_DEFAULTS } from "./variables.js";
 import { DEFAULTS } from "./layout.js";
 import { RENAME_DEFAULTS } from "./rename.js";
 import { LINT_DEFAULTS } from "./lint.js";
@@ -90,6 +91,16 @@ export const OPTIONS = [
   slider("rerouteClearance", "Links", "Clearance around nodes and groups", 4, 80, 2, "How far a rerouted link stays from the nodes and groups it avoids."),
   slider("rerouteMinLength", "Links", "Only reroute links longer than", 0, 2000, 50, "Short links are left straight even if they clip a node."),
 
+  combo("variableMode", "Links", "Replace links with variables", [
+    opt("off", "No"),
+    opt("long", "Long links"),
+    opt("blocked", "Links that would cross a node or run backwards"),
+    opt("both", "Long or blocked links"),
+  ], "Swaps a link for a small Set node next to its source and a Get node next to each node that uses it. The workflow runs the same, but it then needs Prettifier installed to open."),
+  slider("variableMinLength", "Links", "A link is long from", 300, 6000, 100, "Length in canvas pixels after the layout."),
+  text("variableNameTemplate", "Links", "Variable name template", "Tokens: {name} the output's name, {type} data type, {source} title of the node it comes from. Names already in use get a number. Example: {source} {name}"),
+  bool("variableCollapse", "Links", "Collapse variable nodes"),
+
   // Nodes
   combo("collapseMode", "Nodes", "Collapse nodes", [opt("keep", "Don't change"), opt("collapse", "Collapse matching nodes"), opt("expand", "Expand everything")]),
   text("collapseMatch", "Nodes", "Collapse nodes matching", "Regular expression matched against node type, title and pipeline stage. Example: Loader|Primitive|Utilities"),
@@ -170,6 +181,7 @@ export const EXTRA_DEFAULTS = {
   rerouteAvoidGroups: true,
   rerouteClearance: 16,
   rerouteMinLength: 300,
+  ...VARIABLE_DEFAULTS,
   collapseMode: "keep",
   collapseMatch: "Loader|Primitive",
   inactiveStyle: "keep",

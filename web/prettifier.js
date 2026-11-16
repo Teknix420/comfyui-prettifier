@@ -3,7 +3,8 @@
 
 import { app } from "../../scripts/app.js";
 import { settingDefinitions } from "./settings.js";
-import { prettify, undoLast, renameOnly, reroutesOnly, summaryNote, toast } from "./core.js";
+import { prettify, undoLast, renameOnly, reroutesOnly, summaryNote, toast, linksToVariablesNow, variablesToLinksNow } from "./core.js";
+import { registerVariableNodes } from "./variables.js";
 import { openLintReport } from "./lintdialog.js";
 import { forgetWorkflowOptions, isStampCurrent } from "./extras.js";
 import { getOption } from "./settings.js";
@@ -35,6 +36,8 @@ const commands = [
   cmd("SummaryNote", "Create or update summary note", () => summaryNote(app), "pi pi-file-edit"),
   cmd("Reroutes.Auto", "Reroute links around nodes", () => reroutesOnly(app, "auto"), "pi pi-share-alt"),
   cmd("Reroutes.Remove", "Remove all reroute dots", () => reroutesOnly(app, "remove"), "pi pi-times"),
+  cmd("Variables.Create", "Replace long links with variables", () => linksToVariablesNow(app), "pi pi-at"),
+  cmd("Variables.Remove", "Turn variables back into links", () => variablesToLinksNow(app), "pi pi-link"),
   cmd("ForgetWorkflowOptions", "Forget this workflow's remembered options", () => {
     forgetWorkflowOptions(app);
     toast(app, "info", "Prettifier", "This workflow will use your global options again.");
@@ -55,6 +58,8 @@ function menuItems() {
     { content: "Create or update summary note", callback: () => summaryNote(app) },
     { content: "Reroute links around nodes", callback: () => reroutesOnly(app, "auto") },
     { content: "Remove all reroute dots", callback: () => reroutesOnly(app, "remove") },
+    { content: "Replace long links with variables", callback: () => linksToVariablesNow(app) },
+    { content: "Turn variables back into links", callback: () => variablesToLinksNow(app) },
     { content: "Prettifier options…", callback: () => openDialog(app) },
     { content: "Undo last prettify", callback: () => undoLast(app) },
     { content: "Fit groups to their nodes", callback: () => fitGroupsToNodes(app) },
@@ -103,10 +108,15 @@ app.registerExtension({
   menuCommands: [
     {
       path: ["Extensions", "Prettifier"],
-      commands: ["Prettifier.Prettify", "Prettifier.PrettifySelection", "Prettifier.Rename", "Prettifier.Lint", "Prettifier.SummaryNote", "Prettifier.Reroutes.Auto", "Prettifier.Reroutes.Remove", "Prettifier.OpenDialog", "Prettifier.Undo", "Prettifier.FitGroups", "Prettifier.ForgetWorkflowOptions"],
+      commands: ["Prettifier.Prettify", "Prettifier.PrettifySelection", "Prettifier.Rename", "Prettifier.Lint", "Prettifier.SummaryNote", "Prettifier.Reroutes.Auto", "Prettifier.Reroutes.Remove", "Prettifier.Variables.Create", "Prettifier.Variables.Remove", "Prettifier.OpenDialog", "Prettifier.Undo", "Prettifier.FitGroups", "Prettifier.ForgetWorkflowOptions"],
     },
     { path: ["Extensions", "Prettifier", "Align selected"], commands: ALIGN.map(([m]) => "Prettifier.Align." + m) },
   ],
+
+  // The Set / Get nodes that stand in for long links.
+  registerCustomNodes() {
+    registerVariableNodes();
+  },
 
   // Newer frontends: canvas right-click menu.
   getCanvasMenuItems() {

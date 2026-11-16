@@ -4,6 +4,7 @@
 
 import { computeLayout, STAGE_NODE_COLORS, stageOf } from "./layout.js";
 import { computeRenames } from "./rename.js";
+import { isVariableNode, variableNeighbor } from "./variables.js";
 
 const LG = () => globalThis.LiteGraph || {};
 export const titleHeight = () => LG().NODE_TITLE_HEIGHT ?? 30;
@@ -157,10 +158,13 @@ export function readModel(graph, nodes) {
     const collapsed = !!n.flags?.collapsed;
     const [fw, fh] = fitSize(n);
     const cw = collapsedWidth(n);
+    // Variable nodes are grouped with the node they sit next to.
+    const like = isVariableNode(n) ? variableNeighbor(graph, n) : null;
     return {
       id: n.id,
       type: n.type ?? n.comfyClass,
-      category: n.constructor?.nodeData?.category ?? n.constructor?.category ?? n.category ?? "",
+      category: nodeCategory(like ?? n),
+      stageLike: like ? { type: like.type ?? like.comfyClass, category: nodeCategory(like), isOutput: !!(like.constructor?.nodeData?.output_node ?? like.isOutputNode), isNote: false } : undefined,
       isOutput: !!(n.constructor?.nodeData?.output_node ?? n.isOutputNode),
       isNote: isNote(n),
       pinned: !!(n.pinned ?? n.flags?.pinned),
@@ -304,6 +308,7 @@ export function defaultTitle(n) {
 /** Apply the renaming rules to the given nodes. Returns { titles, labels } counts. */
 export function renameNodes(graph, nodes, opts) {
   if (opts.nodeTitleMode === "keep" && opts.slotLabelMode === "keep") return { titles: 0, labels: 0 };
+  nodes = nodes.filter((n) => !isVariableNode(n)); // their titles carry the variable name
   const titleH = titleHeight();
   const groups = graphGroups(graph).map((g) => ({ g, ...groupRect(g) }));
   const model = nodes.map((n) => {
@@ -371,6 +376,48 @@ export function renameNodes(graph, nodes, opts) {
   }
   graph.setDirtyCanvas?.(true, true);
   return { titles: res.titles.size, labels };
+}
+
+/**
+ * Link ends and node rectangles, either where they are now (opts omitted) or
+ * where a layout with the given options would put them. Used to judge which links
+ * are long or blocked before anything moves.
+ * Returns { links: [{ id, from, to, sx, sy, tx, ty }], boxes: [{ id, x, y, w, h }] }.
+ */
+export function linkGeometry(graph, nodes, opts) {
+  const model = readModel(graph, nodes);
+  const th = model.titleH ?? titleHeight();
+  const placed = new Map(model.nodes.map((m) => [m.id, { ...m }]));
+  if (opts) {
+    try {
+      for (const r of computeLayout(model, opts).nodes) {
+        const p = placed.get(r.id);
+        if (p) Object.assign(p, { x: r.x, y: r.y, w: r.w, h: p.collapsed ? 0 : r.h });
+      }
+    } catch (err) {
+      console.warn("[Prettifier] could not predict the layout", err);
+    }
+  }
+  const boxes = [...placed.values()].map((p) => ({ id: p.id, x: p.x, y: p.y - th, w: p.w, h: p.h + th }));
+  const links = [];
+  for (const n of nodes) {
+    (n.inputs || []).forEach((input, toSlot) => {
+      const link = getLink(graph, input?.link);
+      if (!link) return;
+      const a = placed.get(link.origin_id), b = placed.get(n.id);
+      if (!a || !b) return;
+      links.push({
+        id: link.id,
+        from: a.id,
+        to: b.id,
+        sx: a.x + a.w,
+        sy: a.y - th + (a.outSlots?.[link.origin_slot] ?? th / 2),
+        tx: b.x,
+        ty: b.y - th + (b.inSlots?.[toSlot] ?? th / 2),
+      });
+    });
+  }
+  return { links, boxes };
 }
 
 // --- apply --------------------------------------------------------------------

@@ -63,6 +63,11 @@ set several options at once. **Apply** saves the options as your defaults; **Can
   through a node get new dots that carry them above or below it. Links are also
   kept out of groups they don't belong to (neither end inside), which you can turn
   off. Or just remove every dot, or leave them alone.
+- **Variables instead of long links.** Optionally swap long links, or links that
+  would cross a node or run backwards, for a small **Set** node next to the
+  source and a **Get** node next to each node that uses the value. The workflow
+  runs exactly the same. One variable is made per output and named from a
+  template, and "Turn variables back into links" undoes it at any time.
 - **Renaming.** Rename node titles and connector labels from templates
   (`{stage}: {default}`, `{name}[ ← {source}]`), with criteria (only untouched
   nodes, only matching types, only connected connectors), capitalization,
@@ -116,7 +121,7 @@ connectors that would end up with the same label are numbered. Inside a subgraph
 | Sizing | Node width mode, fixed/min/max width, node height mode, shrink nodes with images or text |
 | Groups | Group by (auto, existing, stage, category, section, none), minimum group size, category depth, padding, title size, color mode, single color |
 | Placement | Unconnected nodes, notes, separate sections, never move pinned nodes |
-| Links | Reroute dots (auto, remove, keep), route around groups, clearance, minimum link length |
+| Links | Reroute dots (auto, remove, keep), route around groups, clearance, minimum link length, replace links with variables (long, blocked, both), length that counts as long, variable name template, collapse variable nodes |
 | Nodes | Collapse mode and pattern, muted/bypassed style, subgraphs, subgraph connector order |
 | Renaming | Rename on prettify, title mode/template/criteria/type filter/capitalization/numbering/rules, connector mode/template/sides/only connected/widget inputs/capitalization/rules, subgraph connector mode/template |
 | Notes | Summary note on/off, type, title, include prompts |
@@ -129,7 +134,8 @@ pipeline stage. "No groups" removes groups in the area being prettified.
 
 Commands (top menu, canvas right-click, or bind your own keys): Prettify workflow,
 Prettify selected nodes, Rename nodes and connectors, Lint workflow, Create or update
-summary note, Reroute links around nodes, Remove all reroute dots, Prettifier
+summary note, Reroute links around nodes, Remove all reroute dots, Replace long links with
+variables, Turn variables back into links, Prettifier
 options, Undo last prettify, Fit groups to their nodes, Forget this workflow's
 remembered options, and the Align tools.
 
@@ -146,6 +152,7 @@ web/rename.js      pure renaming engine (templates, rules)
 web/lint.js        pure lint checks
 web/extras.js      reroutes, collapse rules, summary note, per-workflow options, subgraphs
 web/subgraphs.js   subgraph inputs/outputs: renaming, reordering, undo
+web/variables.js   Set / Get variable nodes and swapping links for them
 web/themes.js      palettes, saved themes, export/import
 web/dialog.js      options dialog with live preview
 web/lintdialog.js  lint report panel
@@ -163,6 +170,7 @@ node tests/test_rename.mjs
 node tests/test_lint.mjs
 node tests/test_reroutes.mjs
 node tests/test_subgraphs.mjs
+node tests/test_variables.mjs
 ```
 
 ## Known limitations
@@ -172,6 +180,10 @@ node tests/test_subgraphs.mjs
   router, so busy graphs can still have links crossing nodes or groups.
 - Prettify on save hooks ComfyUI's Save and Save As commands; other ways of
   saving (export, API) are not affected.
+- Variables: the Set and Get nodes come with Prettifier, so a workflow that uses
+  them needs Prettifier installed to open and run (turn them back into links
+  before sharing it with someone who does not have it). A variable is only
+  visible inside the graph or subgraph it is in.
 - Nested groups: nodes are laid out by their innermost group; outer groups are
   refit around their contents afterwards and may overlap neighbours.
 - Inside a subgraph, the open subgraph is what gets prettified.
