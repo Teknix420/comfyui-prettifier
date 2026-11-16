@@ -92,10 +92,70 @@ function segmentHitsBox(ax, ay, bx, by, r, m) {
 }
 
 /**
+ * A path that stays level: the link leaves its output level and only changes height
+ * where something is in the way, or just before the input. Returns the dot positions
+ * in order, or null when no such path was found.
+ */
+function levelRoute(sx, sy, tx, ty, others, gap, margin, lane) {
+  const hits = (ax, ay, bx, by, skip) => others.filter((b) => !skip?.has(b) && segmentHitsBox(ax, ay, bx, by, b, 2));
+  const endX = tx - gap;
+  if (endX - sx < 2 * gap) return null;
+  const pts = [];
+  let cx = sx, y = sy;
+  for (let guard = 0; guard < 6; guard++) {
+    const blocked = hits(cx, y, endX, y);
+    if (!blocked.length) {
+      if (Math.abs(y - ty) >= 1 && endX > cx + 8) {
+        if (hits(endX, y, tx, ty).length) return null;
+        pts.push([endX, y]);
+      } else if (hits(cx, y, tx, ty).length) return null;
+      return pts;
+    }
+    // Go around the first thing in the way: at the input's height when that is
+    // clear of it (the rest of the link is then level), otherwise just above or below.
+    const set = new Set([blocked.reduce((a, b) => (b.x < a.x ? b : a))]);
+    let ly, dir, ax, bx, direct, ok = false;
+    for (let iter = 0; iter < 8; iter++) {
+      const arr = [...set];
+      const top = Math.min(...arr.map((b) => b.y)), bottom = Math.max(...arr.map((b) => b.y + b.h));
+      const left = Math.min(...arr.map((b) => b.x)), right = Math.max(...arr.map((b) => b.x + b.w));
+      const above = top - margin, below = bottom + margin;
+      if (ty <= above || ty >= below) {
+        ly = ty;
+        dir = 0;
+      } else {
+        const costA = Math.abs(y - above) + Math.abs(ty - above), costB = Math.abs(y - below) + Math.abs(ty - below);
+        dir = costA <= costB ? -1 : 1;
+        ly = dir < 0 ? above : below;
+      }
+      bx = left - gap;
+      ax = bx - gap;
+      if (bx < cx + 8 || bx >= endX) return null;
+      direct = ax < cx + 8; // no room to stay level first: head straight for the lane
+      const more = [...hits(direct ? cx : ax, y, bx, ly, set), ...hits(bx, ly, Math.min(endX, right + gap), ly, set)];
+      if (!more.length) {
+        ok = true;
+        break;
+      }
+      more.forEach((b) => set.add(b));
+    }
+    if (!ok) return null;
+    if (dir) ly += lane(ly) * 10 * dir;
+    if (!direct) pts.push([ax, y]);
+    pts.push([bx, ly]);
+    cx = bx;
+    y = ly;
+  }
+  return null;
+}
+
+/**
  * Reroute cleanup for links between the given nodes (at their current positions).
  * Auto mode detours links around nodes, and (rerouteAvoidGroups) around groups that
  * contain neither end of the link.
  * mode: keep | remove | auto.  Returns { removed, added }.
+ * o.rerouteStyle "level" keeps links level and only bends them where they must.
+ * o.clearAll (whole workflow) removes every dot first, not only those of these links.
  */
 export function cleanReroutes(graph, nodes, o) {
   const res = { removed: 0, added: 0 };
@@ -104,13 +164,22 @@ export function cleanReroutes(graph, nodes, o) {
   const links = graphLinks(graph).filter((l) => inScope.has(l.origin_id) && inScope.has(l.target_id));
   const linkIds = new Set(links.map((l) => l.id));
 
-  // Remove reroute dots that only serve links in scope.
+  // Whole workflow: every old dot goes, including ones left floating or attached to
+  // links that no longer exist. A selection only clears the dots of its own links.
   for (const [id, r] of [...graph.reroutes]) {
     const ids = [...(r.linkIds ?? [])];
-    if (ids.length && ids.every((i) => linkIds.has(i))) {
+    if (!o.clearAll && !(ids.length && ids.every((i) => linkIds.has(i)))) continue;
+    try {
       graph.removeReroute(id);
-      res.removed++;
+    } catch (err) {
+      console.warn("[Prettifier] could not remove reroute", err);
     }
+    if (graph.reroutes.has?.(id)) graph.reroutes.delete(id);
+    res.removed++;
+  }
+  if (o.clearAll) {
+    // A link must not keep pointing at a dot that is gone.
+    for (const l of graphLinks(graph)) if (l.parentId != null && !graph.reroutes.has?.(l.parentId)) delete l.parentId;
   }
   if (o.rerouteMode !== "auto" || typeof graph.createReroute !== "function") return res;
 
@@ -151,6 +220,23 @@ export function cleanReroutes(graph, nodes, o) {
     if (!hit.length && !backward) continue;
     if (!backward && tx - sx < (o.rerouteMinLength ?? 300)) continue;
 
+    const gap = Math.min(40, Math.max(16, (o.hGap ?? 80) / 2));
+    if (o.rerouteStyle === "level" && !backward) {
+      const pts = levelRoute(sx, sy, tx, ty, others, gap, margin, lane);
+      if (pts?.length) {
+        try {
+          // createReroute inserts before the given segment, so go from the far end.
+          let before = link;
+          for (let i = pts.length - 1; i >= 0; i--) before = graph.createReroute(pts[i], before);
+          res.added += pts.length;
+        } catch (err) {
+          console.warn("[Prettifier] could not add reroute", err);
+          break;
+        }
+        continue;
+      }
+    }
+
     // Grow the set of obstacles until the detour lane itself is clear.
     let top, bottom, left, right, y, ax, bx;
     const span = backward ? boxes.filter((b) => b.x < sx + 40 && b.x + b.w > tx - 40) : hit;
@@ -159,7 +245,6 @@ export function cleanReroutes(graph, nodes, o) {
       set.add(boxes.find((b) => b.n === src));
       set.add(boxes.find((b) => b.n === dst));
     }
-    const gap = Math.min(40, Math.max(16, (o.hGap ?? 80) / 2));
     for (let iter = 0; iter < 8; iter++) {
       const arr = [...set];
       top = Math.min(...arr.map((b) => b.y));

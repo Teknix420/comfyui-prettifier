@@ -345,6 +345,32 @@ for (const [name, wf, opts] of cases) {
   for (const extra of [{ direction: "TB" }, { packing: "wrap" }, { verticalAlign: "center" }]) run({ looseAlign: "nodes", looseMatchWidth: true, ...extra });
 }
 
+// A second run on the layout's own result must change nothing.
+{
+  const raw = [
+    [4, "CheckpointLoaderSimple", "loaders", 26, 474, 315, 98, 0, 3], [21, "LoraLoader", "loaders", 400, 474, 315, 126, 2, 2],
+    [6, "CLIPTextEncode", "conditioning", 415, 186, 422, 164, 1, 1], [7, "CLIPTextEncode", "conditioning", 413, 389, 425, 180, 1, 1],
+    [5, "EmptyLatentImage", "latent", 473, 609, 315, 106, 0, 1], [3, "KSampler", "sampling", 863, 186, 315, 262, 4, 1],
+    [8, "VAEDecode", "latent", 1209, 188, 210, 46, 2, 1], [9, "SaveImage", "image", 1451, 189, 210, 270, 1, 0], [20, "Note", "utils", 700, 1200, 400, 120, 0, 0],
+  ];
+  const links = [[4,0,21,0],[4,1,21,1],[21,1,6,0],[21,1,7,0],[21,0,3,0],[6,0,3,1],[7,0,3,2],[5,0,3,3],[3,0,8,0],[4,2,8,1],[8,0,9,0]];
+  const slots = (n) => Array.from({ length: n }, (_, i) => 30 + (i + 0.7) * 20);
+  const model = (pos) => ({
+    titleH: 30, groups: [],
+    nodes: raw.map(([id, type, category, x, y, w, h, ins, outs]) => {
+      const p = pos?.get(id);
+      return { id, type, category, isOutput: type === "SaveImage", isNote: type === "Note", x: p?.x ?? x, y: p?.y ?? y, w: p?.w ?? w, h: p?.h ?? h, fitW: 200, fitH: h, inSlots: slots(ins), outSlots: slots(outs), groups: [] };
+    }),
+    edges: links.map(([from, fromSlot, to, toSlot]) => ({ from, fromSlot, to, toSlot })),
+  });
+  for (const opts of [{ groupBy: "stage", minGroupSize: 1 }, { groupBy: "stage", minGroupSize: 2 }, { groupBy: "none" }, { groupBy: "stage", minGroupSize: 2, looseAlign: "nodes" }, { groupBy: "none", notePlacement: "keep" }]) {
+    const show = (r) => r.nodes.map((n) => `${n.id}:${n.x},${n.y},${n.w},${n.h}`).join(" ");
+    const one = computeLayout(model(null), opts);
+    const two = computeLayout(model(new Map(one.nodes.map((n) => [n.id, n]))), opts);
+    check(show(one) === show(two), `repeat run changes nothing (${JSON.stringify(opts)})`);
+  }
+}
+
 if (failures) {
   console.log(`\n${failures} check(s) failed`);
   process.exit(1);

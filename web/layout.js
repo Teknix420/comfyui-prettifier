@@ -707,6 +707,13 @@ function sizeNode(n, o) {
   if (protect) w = Math.max(w, n.w);
   if (o.heightMode === "fit") h = protect ? Math.max(n.h, fitH) : fitH;
   h = Math.max(h, fitH);
+  // Lay out with the size the node ends up with (see "Snap"), so that running the
+  // layout on its own result changes nothing.
+  if (o.snapToGrid && (o.widthMode !== "keep" || o.heightMode !== "keep")) {
+    const gs = Math.max(1, o.gridSize);
+    w = Math.ceil(w / gs) * gs;
+    h = Math.ceil(h / gs) * gs;
+  }
   return { w, h, flex };
 }
 
@@ -1140,15 +1147,14 @@ export function computeLayout(model, userOpts = {}) {
 
   // 8. Translate to origin.
   if (box.size) {
+    // Top-left corner of everything that will be drawn: a grouped node counts with
+    // its group's margin, an ungrouped one does not. (Counting the margin for every
+    // node made the whole workflow creep down and right on each run.)
     let minX = Infinity, minY = Infinity;
-    for (const b of box.values()) {
-      minX = Math.min(minX, b.x);
-      minY = Math.min(minY, b.y);
-    }
-    const hasGroups = clusterMembers.size > 0;
-    if (hasGroups) {
-      minX -= pad;
-      minY -= pad + groupTitleH;
+    for (const [id, b] of box) {
+      const grouped = memberOf.has(id);
+      minX = Math.min(minX, b.x - (grouped ? pad : 0));
+      minY = Math.min(minY, b.y - (grouped ? pad + groupTitleH : 0));
     }
     let tx = 0, ty = 0;
     if (o.origin === "keep") {
@@ -1161,6 +1167,12 @@ export function computeLayout(model, userOpts = {}) {
           ty = Math.min(ty, g.y);
         }
       }
+    }
+    // Anchor on the grid, so a repeat run rounds every node the same way.
+    if (o.snapToGrid) {
+      const gs = Math.max(1, o.gridSize);
+      tx = Math.round(tx / gs) * gs;
+      ty = Math.round(ty / gs) * gs;
     }
     for (const b of box.values()) {
       b.x += tx - minX;

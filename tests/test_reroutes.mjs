@@ -92,6 +92,76 @@ const base = { rerouteMode: "auto", rerouteClearance: 16, rerouteMinLength: 300,
   check("detour avoids the nearby group", !crossesRect(path, rect));
 }
 
+// --- stay level -----------------------------------------------------------------
+const levelOpts = { ...base, rerouteStyle: "level" };
+const levelLength = (path) => {
+  let n = 0;
+  for (let i = 0; i + 1 < path.length; i++) if (Math.abs(path[i][1] - path[i + 1][1]) < 1) n += Math.abs(path[i + 1][0] - path[i][0]);
+  return n;
+};
+
+// The target is lower and a node sits on the straight line, but not at the source's height.
+{
+  const A = node(1, 0, 0), B = node(2, 1400, 400), C = node(3, 600, 150);
+  const g = makeGraph([A, B, C], [[1, 2]], []);
+  const r = cleanReroutes(g, [A, B, C], levelOpts);
+  const path = pathOf(g, 1, A, B);
+  check("level: one dot is enough when the source's height is clear", r.added === 1, JSON.stringify(r));
+  check("level: runs level from the output", path[1][1] === path[0][1] && path[1][0] > 1300, JSON.stringify(path));
+  check("level: avoids the node", !crossesRect(path, [600, 120, 200, 130]));
+}
+
+// Something at the source's height: stay level up to it, then move to the input's height.
+{
+  const A = node(1, 0, 0), B = node(2, 1400, 300), C = node(3, 300, -20);
+  const g = makeGraph([A, B, C], [[1, 2]], []);
+  const r = cleanReroutes(g, [A, B, C], levelOpts);
+  const path = pathOf(g, 1, A, B);
+  check("level: two dots around a node", r.added === 2, JSON.stringify(r));
+  check("level: first run and last run are level", path[0][1] === path[1][1] && path[2][1] === path[3][1], JSON.stringify(path));
+  check("level: most of the link is level", levelLength(path) > 1000, String(levelLength(path)));
+  check("level: avoids the node", !crossesRect(path, [300, -50, 200, 130]));
+}
+
+// Source and target at the same height with a node between: over it, level, and back down.
+{
+  const A = node(1, 0, 0), B = node(2, 1400, 0), C = node(3, 600, -20);
+  const rect = [560, -100, 300, 260];
+  const g = makeGraph([A, B, C], [[1, 2]], [rect]);
+  const r = cleanReroutes(g, [A, B, C], { ...levelOpts, rerouteAvoidGroups: true });
+  const path = pathOf(g, 1, A, B);
+  check("level: three dots when it must return to the same height", r.added === 3, JSON.stringify(r));
+  check("level: stays out of the group", !crossesRect(path, rect), JSON.stringify(path));
+}
+
+// An unblocked link gets no dots, level or not.
+{
+  const A = node(1, 0, 0), B = node(2, 1400, 400);
+  const g = makeGraph([A, B], [[1, 2]], []);
+  check("level: clear link is left alone", cleanReroutes(g, [A, B], levelOpts).added === 0);
+}
+
+// --- clearing old dots ------------------------------------------------------------
+{
+  const A = node(1, 0, 0), B = node(2, 1400, 0), C = node(3, 600, -20);
+  const g = makeGraph([A, B, C], [[1, 2]], []);
+  cleanReroutes(g, [A, B, C], { ...base, clearAll: true });
+  const first = [...g.reroutes.values()].map((r) => r.pos.join());
+  // Leftovers: a dot no link uses, and one whose link is gone.
+  g.reroutes.set(900, { id: 900, pos: [5, 5], linkIds: new Set() });
+  g.reroutes.set(901, { id: 901, pos: [9, 9], linkIds: new Set([777]) });
+  g.links.get(1).path = [];
+  const r = cleanReroutes(g, [A, B, C], { ...base, clearAll: true });
+  const second = [...g.reroutes.values()].map((x) => x.pos.join());
+  check("whole workflow clears every old dot", r.removed === 4 && !g.reroutes.has(900) && !g.reroutes.has(901), JSON.stringify(r));
+  check("and puts the same dots back", first.join("|") === second.join("|") && second.length === 2, second.join("|"));
+
+  g.reroutes.set(902, { id: 902, pos: [5, 5], linkIds: new Set() });
+  g.links.get(1).path = [];
+  const r2 = cleanReroutes(g, [A, B, C], { ...base });
+  check("a selection leaves other dots alone", g.reroutes.has(902) && r2.removed === 2, JSON.stringify(r2));
+}
+
 if (failed) {
   console.error(`${failed} check(s) failed`);
   process.exit(1);

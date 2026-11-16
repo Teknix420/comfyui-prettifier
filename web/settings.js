@@ -104,6 +104,10 @@ export const OPTIONS = [
     opt("remove", "Remove all reroute dots"),
     opt("keep", "Leave reroute dots alone"),
   ], "Auto routes long links above or below the nodes they would otherwise run through."),
+  combo("rerouteStyle", "Links", "Rerouted links", [
+    opt("detour", "Take the shortest way around"),
+    opt("level", "Stay level, bend only where needed"),
+  ], "Stay level: a rerouted link runs horizontally as far as it can and only gets a dot where it has to change height to pass something, or just before its input."),
   bool("rerouteAvoidGroups", "Links", "Route around groups", "Auto also keeps a link out of any group that neither of its ends is in."),
   slider("rerouteClearance", "Links", "Clearance around nodes and groups", 4, 80, 2, "How far a rerouted link stays from the nodes and groups it avoids."),
   slider("rerouteMinLength", "Links", "Only reroute links longer than", 0, 2000, 50, "Short links are left straight even if they clip a node."),
@@ -195,6 +199,7 @@ export const EXTRA_DEFAULTS = {
   scope: "auto",
   showToast: true,
   rerouteMode: "auto",
+  rerouteStyle: "detour",
   rerouteAvoidGroups: true,
   rerouteClearance: 16,
   rerouteMinLength: 300,

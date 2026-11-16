@@ -129,7 +129,7 @@ function runPasses(app, graph, nodes, o, { isSelection, noHistory, isChild }) {
     animate: o.animate && !isChild,
     fitView: o.fitView && !isChild,
     onPlaced: () => {
-      stats.reroutes = cleanReroutes(graph, nodes, o);
+      stats.reroutes = cleanReroutes(graph, nodes, { ...o, clearAll: !isSelection });
     },
   });
   // Stage coloring runs inside the layout pass; dimming of inactive nodes wins over it.
@@ -258,7 +258,7 @@ export function reroutesOnly(app, mode) {
   const nodes = graphNodes(graph);
   if (!nodes.length) return null;
   lastSnapshot = snapshotAll(app, graph);
-  const r = cleanReroutes(graph, nodes, { ...o, rerouteMode: mode ?? (o.rerouteMode === "keep" ? "auto" : o.rerouteMode) });
+  const r = cleanReroutes(graph, nodes, { ...o, clearAll: true, rerouteMode: mode ?? (o.rerouteMode === "keep" ? "auto" : o.rerouteMode) });
   notifyChanged(app, graph);
   app.canvas?.setDirty?.(true, true);
   if (o.showToast) toast(app, "success", "Reroutes", `${r.added} dots added, ${r.removed} removed.`);
