@@ -54,6 +54,8 @@ export const DEFAULTS = {
   shrinkLarge: false,
 
   groupBy: "auto", // auto | existing | stage | category | component | type | color | rules | none
+  looseAlign: "box", // box | nodes: what ungrouped nodes line up with next to a group
+  looseMatchWidth: false, // with "nodes": ungrouped nodes take the width of the group's interior
   packing: "flow", // flow | pack | wrap: how much to trade straight flow for a compact shape
   packAspect: 1.6, // target width / height when packing
   groupRules: "", // "Name #color = pattern; ..." custom groups, checked before groupBy
@@ -1015,8 +1017,25 @@ export function computeLayout(model, userOpts = {}) {
     const p = inner.get(k).pos.get(id);
     return { x: p.x + pad, y: p.y + pad + groupTitleH };
   };
+  // Ungrouped nodes can line up with the nodes inside groups instead of with the
+  // group boxes: each one is given the same margin a group has around its nodes.
+  const inset = { x: 0, top: 0, bottom: 0 };
+  if (o.looseAlign === "nodes" && clusterMembers.size) {
+    inset.x = pad;
+    // Following links already lines sockets up; only box-based alignment needs the vertical margin.
+    if (o.direction === "TB" || o.verticalAlign !== "links") {
+      inset.top = pad + groupTitleH;
+      inset.bottom = pad;
+    }
+  }
   const superItems = [];
-  for (const n of layoutNodes) if (!memberOf.has(n.id)) superItems.push(hinted(n));
+  for (const n of layoutNodes) {
+    if (memberOf.has(n.id)) continue;
+    const it = hinted(n);
+    it.w += inset.x * 2;
+    it.h += inset.top + inset.bottom;
+    superItems.push(it);
+  }
   for (const [k, mem] of clusterMembers) {
     const r = inner.get(k);
     const its = mem.map(hinted);
@@ -1041,8 +1060,8 @@ export function computeLayout(model, userOpts = {}) {
       to: b,
       fromSlot: e.fromSlot,
       toSlot: e.toSlot,
-      fromOff: (fo ?? (size.get(e.from).h + titleH) / 2) + innerOff(e.from).y,
-      toOff: (to ?? (size.get(e.to).h + titleH) / 2) + innerOff(e.to).y,
+      fromOff: (fo ?? (size.get(e.from).h + titleH) / 2) + (memberOf.has(e.from) ? innerOff(e.from).y : inset.top),
+      toOff: (to ?? (size.get(e.to).h + titleH) / 2) + (memberOf.has(e.to) ? innerOff(e.to).y : inset.top),
     });
   }
   const sup = layered(superItems, superEdges, o);
@@ -1060,11 +1079,32 @@ export function computeLayout(model, userOpts = {}) {
       w = inner.get(k).width.get(n.id);
     } else {
       const sp = sup.pos.get(n.id);
-      x = sp.x;
-      y = sp.y;
-      w = sup.width.get(n.id);
+      x = sp.x + inset.x;
+      y = sp.y + inset.top;
+      w = sup.width.get(n.id) - inset.x * 2;
     }
     box.set(n.id, { x, y, w, h: size.get(n.id).h + titleH });
+  }
+
+  // 6b. Ungrouped nodes take the width of the interior of the group(s) in their column.
+  if (o.looseAlign === "nodes" && o.looseMatchWidth && o.direction !== "TB" && clusterMembers.size) {
+    const groupSpans = [...clusterMembers.keys()].map((k) => {
+      const sp = sup.pos.get("c:" + k);
+      return { x: sp.x, w: inner.get(k).w + pad * 2 };
+    });
+    for (const n of layoutNodes) {
+      if (memberOf.has(n.id) || !size.get(n.id).flex) continue; // only nodes whose width may change
+      const b = box.get(n.id);
+      const outer = { x: b.x - inset.x, w: b.w + inset.x * 2 };
+      const same = groupSpans.filter((g) => g.x < outer.x + outer.w && outer.x < g.x + g.w);
+      if (!same.length) continue;
+      const left = Math.min(...same.map((g) => g.x)), right = Math.max(...same.map((g) => g.x + g.w));
+      const w = right - left - pad * 2;
+      if (w > b.w) {
+        b.x = left + pad;
+        b.w = w;
+      }
+    }
   }
 
   // 7. Notes band.

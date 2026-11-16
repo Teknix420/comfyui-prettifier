@@ -120,7 +120,7 @@ connectors that would end up with the same label are numbered. Inside a subgraph
 | Spacing | Horizontal, vertical and section gaps, snap to grid, grid size, anchor |
 | Sizing | Node width mode, fixed/min/max width, node height mode, shrink nodes with images or text |
 | Groups | Arrangement (follow the flow, compact, most compact), target shape, group by (auto, existing, stage, category, section, node type, node color, only my rules, none), custom group rules, groups not to create, name template, name find/replace, number duplicate names, restyle existing groups, minimum group size, category depth, padding, title size, color mode, single color |
-| Placement | Unconnected nodes, notes, separate sections, never move pinned nodes |
+| Placement | Unconnected nodes, notes, separate sections, align ungrouped nodes with the group box or with the nodes inside groups, match grouped node width, never move pinned nodes |
 | Links | Reroute dots (auto, remove, keep), route around groups, clearance, minimum link length, replace links with variables (long, blocked, both), length that counts as long, variable name template, collapse variable nodes |
 | Nodes | Collapse mode and pattern, muted/bypassed style, subgraphs, subgraph connector order |
 | Renaming | Rename on prettify, title mode/template/criteria/type filter/capitalization/numbering/rules, connector mode/template/sides/only connected/widget inputs/capitalization/rules, subgraph connector mode/template |
@@ -154,6 +154,11 @@ Group names can be shaped with a template (`{name}`, `{count}`, `{n}`, `{stage}`
 for example `{n}. {name} ({count})`) and with find/replace rules
 (`Models => Loaders`). "Don't create groups named" skips groups by name, such as
 `Utilities|Other`.
+
+An ungrouped node that shares a column with a group normally lines up with the
+group box. **Placement → Align ungrouped nodes with → The nodes inside groups**
+insets it by the group padding so it lines up with the grouped nodes instead, and
+"Ungrouped nodes match grouped node width" also gives it their width.
 
 "Auto" grouping keeps your groups if the workflow has any, and otherwise groups by
 pipeline stage. "No groups" removes groups in the area being prettified.

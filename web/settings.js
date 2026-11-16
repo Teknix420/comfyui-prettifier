@@ -94,6 +94,8 @@ export const OPTIONS = [
   combo("isolatedPlacement", "Placement", "Unconnected nodes", [opt("bottom", "Row below"), opt("right", "Column to the right"), opt("keep", "Leave where they are")]),
   combo("notePlacement", "Placement", "Notes", [opt("top", "Row above the workflow"), opt("bottom", "Row below"), opt("keep", "Leave where they are")]),
   combo("componentPacking", "Placement", "Separate sections", [opt("vertical", "Stack vertically"), opt("horizontal", "Side by side")]),
+  combo("looseAlign", "Placement", "Align ungrouped nodes with", [opt("box", "The group box"), opt("nodes", "The nodes inside groups")], "Next to a group, an ungrouped node can line up with the edge of the group box or, inset by the group padding, with the nodes inside it."),
+  bool("looseMatchWidth", "Placement", "Ungrouped nodes match grouped node width", "With 'The nodes inside groups': an ungrouped node in the same column as a group is widened to the width of the group's interior."),
   bool("respectPinned", "Placement", "Never move pinned nodes"),
 
   // Links

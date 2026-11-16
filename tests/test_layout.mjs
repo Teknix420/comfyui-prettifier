@@ -188,6 +188,9 @@ const cases = [
   ["messy-type", messy, { groupBy: "type", minGroupSize: 1 }],
   ["messy-rules", messy, { groupBy: "stage", minGroupSize: 1, groupRules: "Loaders #123456 = Loader; Text = TextEncode" }],
   ["random-60-rules-only", randomWorkflow(60), { groupBy: "rules", groupRules: "Sampling = sampl; Images = image" }],
+  ["messy-loose-nodes", messy, { groupBy: "stage", looseAlign: "nodes", looseMatchWidth: true }],
+  ["random-60-loose-nodes", randomWorkflow(60), { groupBy: "stage", minGroupSize: 3, looseAlign: "nodes", looseMatchWidth: true }],
+  ["random-150-loose-top", randomWorkflow(150, 3), { groupBy: "category", minGroupSize: 4, looseAlign: "nodes", looseMatchWidth: true, verticalAlign: "top" }],
   ["messy-pack", messy, { groupBy: "stage", minGroupSize: 1, packing: "pack" }],
   ["messy-wrap", messy, { groupBy: "stage", minGroupSize: 1, packing: "wrap" }],
   ["messy-wrap-TB", messy, { direction: "TB", packing: "wrap" }],
@@ -297,6 +300,49 @@ for (const [name, wf, opts] of cases) {
   check(w2.h < f2.h * 0.75 && w2.cols > f2.cols, "wrap splits the tall column");
   check(w2.samplerX > w2.maxLoaderX, "flow still runs left to right after wrapping");
   check(wrap.gw / wrap.gh > 0.6 && wrap.gw / wrap.gh < 4, "wrapped group is roughly the target shape");
+}
+
+// --- ungrouped nodes next to groups ------------------------------------------
+{
+  // Column 1: a "Models" group of two loaders and, below it, a loose primitive. All feed one sampler.
+  const wf = {
+    nodes: [
+      { id: 1, type: "CheckpointLoaderSimple", category: "loaders", pos: [0, 0], size: [320, 100], outputs: [{}], widgets_values: ["x"] },
+      { id: 2, type: "VAELoader", category: "loaders", pos: [0, 200], size: [320, 60], outputs: [{}], widgets_values: ["x"] },
+      { id: 3, type: "PrimitiveInt", category: "utils", pos: [0, 400], size: [210, 60], outputs: [{}], widgets_values: [1] },
+      { id: 9, type: "KSampler", category: "sampling", pos: [600, 0], size: [300, 260], inputs: [{}, {}, {}], outputs: [{}], widgets_values: [1, 2, 3] },
+    ],
+    links: [[1, 1, 0, 9, 0], [2, 2, 0, 9, 1], [3, 3, 0, 9, 2]],
+  };
+  const run = (opts) => {
+    const model = modelFromWorkflow(wf);
+    const all = { groupBy: "stage", minGroupSize: 2, ...opts };
+    const res = computeLayout(model, all);
+    validate("loose " + JSON.stringify(opts), model, res, { ...DEFAULTS, ...all });
+    const n = (id) => res.nodes.find((x) => x.id === id);
+    return { g: res.newGroups.find((x) => x.title === "Models"), loader: n(1), loose: n(3), pad: all.groupPadding ?? DEFAULTS.groupPadding };
+  };
+  let r = run({});
+  check(r.g && r.loose.x === r.g.x, "default: the loose node lines up with the group box");
+  r = run({ looseAlign: "nodes" });
+  check(r.loose.x === r.loader.x && r.loose.x === r.g.x + r.pad, "nodes: the loose node lines up with the nodes inside the group");
+  r = run({ looseAlign: "nodes", groupPadding: 40 });
+  check(r.loose.x === r.loader.x, "nodes: follows the group padding");
+  const narrow = r.loose.w;
+  r = run({ looseAlign: "nodes", looseMatchWidth: true });
+  check(r.loose.x === r.loader.x && r.loose.w === r.loader.w && r.loose.w >= narrow, "match width: the loose node is as wide as the grouped nodes");
+  r = run({ looseAlign: "nodes", looseMatchWidth: true, widthMode: "keep" });
+  check(r.loose.w === 210, "match width leaves widths alone when node widths are kept");
+  r = run({ looseAlign: "nodes", columnAlign: "right", widthMode: "keep" });
+  check(r.loose.x + r.loose.w === r.loader.x + r.loader.w, "nodes: right alignment lines up right edges");
+  // top alignment: the first loose node in a column is level with the first node of a group
+  const m2 = modelFromWorkflow(wf);
+  const top = computeLayout(m2, { groupBy: "stage", minGroupSize: 2, looseAlign: "nodes", verticalAlign: "top" });
+  const s9 = top.nodes.find((x) => x.id === 9), l1 = top.nodes.find((x) => x.id === 1);
+  check(s9.y === l1.y, "nodes + top alignment: a loose node starts level with the first grouped node");
+  const topBox = computeLayout(modelFromWorkflow(wf), { groupBy: "stage", minGroupSize: 2, verticalAlign: "top" });
+  check(topBox.nodes.find((x) => x.id === 9).y < topBox.nodes.find((x) => x.id === 1).y, "box + top alignment: a loose node starts level with the group's title bar");
+  for (const extra of [{ direction: "TB" }, { packing: "wrap" }, { verticalAlign: "center" }]) run({ looseAlign: "nodes", looseMatchWidth: true, ...extra });
 }
 
 if (failures) {
