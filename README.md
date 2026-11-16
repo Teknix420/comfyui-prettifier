@@ -60,8 +60,9 @@ set several options at once. **Apply** saves the options as your defaults; **Can
 
 **Around the layout**
 - **Reroute cleanup.** Old reroute dots are cleared and long links that would run
-  through a node get new dots that carry them above or below it. Or just remove
-  every dot, or leave them alone.
+  through a node get new dots that carry them above or below it. Links are also
+  kept out of groups they don't belong to (neither end inside), which you can turn
+  off. Or just remove every dot, or leave them alone.
 - **Renaming.** Rename node titles and connector labels from templates
   (`{stage}: {default}`, `{name}[ ← {source}]`), with criteria (only untouched
   nodes, only matching types, only connected connectors), capitalization,
@@ -106,7 +107,7 @@ limited to node or data types: `CLIPTextEncode :: ^.*$ => Prompt`.
 | Sizing | Node width mode, fixed/min/max width, node height mode, shrink nodes with images or text |
 | Groups | Group by (auto, existing, stage, category, section, none), minimum group size, category depth, padding, title size, color mode, single color |
 | Placement | Unconnected nodes, notes, separate sections, never move pinned nodes |
-| Links | Reroute dots (auto, remove, keep), clearance, minimum link length |
+| Links | Reroute dots (auto, remove, keep), route around groups, clearance, minimum link length |
 | Nodes | Collapse mode and pattern, muted/bypassed style, subgraphs |
 | Renaming | Rename on prettify, title mode/template/criteria/type filter/capitalization/numbering/rules, connector mode/template/sides/only connected/widget inputs/capitalization/rules |
 | Notes | Summary note on/off, type, title, include prompts |
@@ -150,13 +151,14 @@ node tests/test_layout.mjs          # invariants: no overlaps, groups don't over
 node tests/test_layout.mjs --svg    # also writes before/after SVGs to tests/out/
 node tests/test_rename.mjs
 node tests/test_lint.mjs
+node tests/test_reroutes.mjs
 ```
 
 ## Known limitations
 
 - Reroute cleanup works on native reroute dots; legacy Reroute nodes are laid out
   like any other node. Auto routing is a simple above-or-below detour, not a full
-  router, so busy graphs can still have links crossing nodes.
+  router, so busy graphs can still have links crossing nodes or groups.
 - Prettify on save hooks ComfyUI's Save and Save As commands; other ways of
   saving (export, API) are not affected.
 - Nested groups: nodes are laid out by their innermost group; outer groups are

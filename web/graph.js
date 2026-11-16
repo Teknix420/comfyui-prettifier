@@ -43,7 +43,7 @@ export function selectedNodes(app) {
   return [];
 }
 
-function groupRect(g) {
+export function groupRect(g) {
   const b = g._bounding ?? g.bounding;
   if (b) return { x: b[0], y: b[1], w: b[2], h: b[3] };
   return { x: g.pos[0], y: g.pos[1], w: g.size[0], h: g.size[1] };

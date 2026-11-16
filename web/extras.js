@@ -4,7 +4,7 @@
 
 import { stageOf } from "./layout.js";
 import { lintModel } from "./lint.js";
-import { graphNodes, getLink, isNote, titleHeight, nodeCategory, defaultTitle, graphLinks } from "./graph.js";
+import { graphNodes, getLink, isNote, titleHeight, nodeCategory, defaultTitle, graphLinks, graphGroups, groupRect } from "./graph.js";
 
 const LG = () => globalThis.LiteGraph || {};
 const safeRegex = (src) => {
@@ -93,6 +93,8 @@ function segmentHitsBox(ax, ay, bx, by, r, m) {
 
 /**
  * Reroute cleanup for links between the given nodes (at their current positions).
+ * Auto mode detours links around nodes, and (rerouteAvoidGroups) around groups that
+ * contain neither end of the link.
  * mode: keep | remove | auto.  Returns { removed, added }.
  */
 export function cleanReroutes(graph, nodes, o) {
@@ -113,6 +115,20 @@ export function cleanReroutes(graph, nodes, o) {
   if (o.rerouteMode !== "auto" || typeof graph.createReroute !== "function") return res;
 
   const boxes = nodes.map((n) => ({ n, ...nodeBox(n) }));
+  // Groups are obstacles too, for links that neither start nor end inside them.
+  const groupBoxes = [];
+  if (o.rerouteAvoidGroups !== false) {
+    for (const g of graphGroups(graph)) {
+      const r = groupRect(g);
+      if (!(r.w > 0 && r.h > 0)) continue;
+      const members = new Set();
+      for (const b of boxes) {
+        const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+        if (cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h) members.add(b.n);
+      }
+      groupBoxes.push({ group: g, members, ...r });
+    }
+  }
   const margin = Math.max(4, o.rerouteClearance ?? 16);
   const lanes = new Map(); // rounded y -> uses
   const lane = (y) => {
@@ -128,21 +144,23 @@ export function cleanReroutes(graph, nodes, o) {
     const src = inScope.get(link.origin_id), dst = inScope.get(link.target_id);
     const [sx, sy] = slotPos(src, false, link.origin_slot);
     const [tx, ty] = slotPos(dst, true, link.target_slot);
-    const others = boxes.filter((b) => b.n !== src && b.n !== dst);
+    const foreign = groupBoxes.filter((g) => !g.members.has(src) && !g.members.has(dst));
+    const others = [...boxes.filter((b) => b.n !== src && b.n !== dst), ...foreign];
     const backward = tx < sx + 20;
     let hit = others.filter((b) => segmentHitsBox(sx, sy, tx, ty, b, 2));
     if (!hit.length && !backward) continue;
     if (!backward && tx - sx < (o.rerouteMinLength ?? 300)) continue;
 
     // Grow the set of obstacles until the detour lane itself is clear.
-    let top, bottom, left, right, y;
+    let top, bottom, left, right, y, ax, bx;
     const span = backward ? boxes.filter((b) => b.x < sx + 40 && b.x + b.w > tx - 40) : hit;
     let set = new Set(span.length ? span : hit);
     if (backward) {
       set.add(boxes.find((b) => b.n === src));
       set.add(boxes.find((b) => b.n === dst));
     }
-    for (let iter = 0; iter < 6; iter++) {
+    const gap = Math.min(40, Math.max(16, (o.hGap ?? 80) / 2));
+    for (let iter = 0; iter < 8; iter++) {
       const arr = [...set];
       top = Math.min(...arr.map((b) => b.y));
       bottom = Math.max(...arr.map((b) => b.y + b.h));
@@ -151,16 +169,21 @@ export function cleanReroutes(graph, nodes, o) {
       const above = top - margin, below = bottom + margin;
       const costA = Math.abs(sy - above) + Math.abs(ty - above), costB = Math.abs(sy - below) + Math.abs(ty - below);
       y = backward ? below : costA <= costB ? above : below;
+      ax = backward ? sx + gap : Math.max(sx + 16, left - gap);
+      bx = backward ? tx - gap : Math.min(tx - 16, right + gap);
       const x0 = backward ? tx - 30 : left - 30, x1 = backward ? sx + 30 : right + 30;
-      const blockers = others.filter((b) => !set.has(b) && segmentHitsBox(Math.min(x0, x1), y, Math.max(x0, x1), y, b, 2));
+      const free = others.filter((b) => !set.has(b));
+      // The lane must be clear, and so must the legs from the source and to the target.
+      const blockers = free.filter(
+        (b) =>
+          segmentHitsBox(Math.min(x0, x1), y, Math.max(x0, x1), y, b, 2) ||
+          (!backward && (segmentHitsBox(sx, sy, ax, y, b, 2) || segmentHitsBox(bx, y, tx, ty, b, 2))),
+      );
       if (!blockers.length) break;
       blockers.forEach((b) => set.add(b));
     }
     const shift = lane(y) * 10 * (y < (sy + ty) / 2 ? -1 : 1);
     y += shift;
-    const gap = Math.min(40, Math.max(16, (o.hGap ?? 80) / 2));
-    const ax = backward ? sx + gap : Math.max(sx + 16, left - gap);
-    const bx = backward ? tx - gap : Math.min(tx - 16, right + gap);
     if (!backward && bx - ax < 20) continue;
     try {
       // createReroute inserts before the given segment, so create the far dot first.
