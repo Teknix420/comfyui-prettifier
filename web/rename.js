@@ -133,7 +133,7 @@ function safeRegex(src, flags = "i") {
   }
 }
 
-function applyRules(s, rules, filterSubject) {
+export function applyRules(s, rules, filterSubject) {
   for (const r of rules) {
     if (r.filter && !r.filter.test(filterSubject ?? "")) continue;
     r.find.lastIndex = 0;

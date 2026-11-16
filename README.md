@@ -55,8 +55,8 @@ set several options at once. **Apply** saves the options as your defaults; **Can
    shrinking unless you allow it.
 5. **Groups.** Either keeps and tidies your existing groups, or creates new ones by
    pipeline stage (Models, Inputs, Prompt, Sampling, Latent, Image, Mask, Output),
-   node category, or connected section. Grouped nodes are laid out together and
-   groups never overlap.
+   node category, node type, node color, connected section, or your own rules.
+   Grouped nodes are laid out together and groups never overlap.
 
 **Around the layout**
 - **Reroute cleanup.** Old reroute dots are cleared and long links that would run
@@ -119,7 +119,7 @@ connectors that would end up with the same label are numbered. Inside a subgraph
 | Layout | Flow direction, column assignment, vertical alignment, alignment inside a column, crossing reduction passes, link straightening iterations, respect current order |
 | Spacing | Horizontal, vertical and section gaps, snap to grid, grid size, anchor |
 | Sizing | Node width mode, fixed/min/max width, node height mode, shrink nodes with images or text |
-| Groups | Group by (auto, existing, stage, category, section, none), minimum group size, category depth, padding, title size, color mode, single color |
+| Groups | Group by (auto, existing, stage, category, section, node type, node color, only my rules, none), custom group rules, groups not to create, name template, name find/replace, number duplicate names, restyle existing groups, minimum group size, category depth, padding, title size, color mode, single color |
 | Placement | Unconnected nodes, notes, separate sections, never move pinned nodes |
 | Links | Reroute dots (auto, remove, keep), route around groups, clearance, minimum link length, replace links with variables (long, blocked, both), length that counts as long, variable name template, collapse variable nodes |
 | Nodes | Collapse mode and pattern, muted/bypassed style, subgraphs, subgraph connector order |
@@ -128,6 +128,20 @@ connectors that would end up with the same label are numbered. Inside a subgraph
 | Appearance | Palette, custom palette JSON, node colors, link style, animation, zoom to fit |
 | Behavior | Scope, prettify on open/save, remember and use per-workflow options, summary message |
 | Lint | Check on prettify, each check on/off, step and CFG thresholds |
+
+### Custom groups
+
+Custom group rules look like `Name = pattern`, separated by `;`, with an optional
+color after the name: `Loaders #3f789e = Loader|Checkpoint; Prompts = TextEncode`.
+The pattern is a regular expression matched against a node's type, title, category
+and pipeline stage. Rules are checked first and in order; nodes no rule claims
+follow "Create groups by" (choose "Only my custom rules" to leave them ungrouped).
+A rule's color wins over the group color mode.
+
+Group names can be shaped with a template (`{name}`, `{count}`, `{n}`, `{stage}`,
+for example `{n}. {name} ({count})`) and with find/replace rules
+(`Models => Loaders`). "Don't create groups named" skips groups by name, such as
+`Utilities|Other`.
 
 "Auto" grouping keeps your groups if the workflow has any, and otherwise groups by
 pipeline stage. "No groups" removes groups in the area being prettified.
@@ -184,6 +198,7 @@ node tests/test_variables.mjs
   them needs Prettifier installed to open and run (turn them back into links
   before sharing it with someone who does not have it). A variable is only
   visible inside the graph or subgraph it is in.
+- New groups are a single level: Prettifier does not create groups inside groups.
 - Nested groups: nodes are laid out by their innermost group; outer groups are
   refit around their contents afterwards and may overlap neighbours.
 - Inside a subgraph, the open subgraph is what gets prettified.

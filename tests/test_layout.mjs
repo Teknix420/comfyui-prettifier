@@ -2,7 +2,7 @@
 // Exercises the pure layout engine on a few workflows and checks basic invariants.
 // With --svg, writes before/after pictures into tests/out/.
 
-import { computeLayout, DEFAULTS } from "../web/layout.js";
+import { computeLayout, DEFAULTS, parseGroupRules } from "../web/layout.js";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -185,6 +185,9 @@ const cases = [
   ["random-60", randomWorkflow(60), { groupBy: "none" }],
   ["random-60-stage", randomWorkflow(60), { groupBy: "stage" }],
   ["random-150-category", randomWorkflow(150, 3), { groupBy: "category", categoryDepth: 2 }],
+  ["messy-type", messy, { groupBy: "type", minGroupSize: 1 }],
+  ["messy-rules", messy, { groupBy: "stage", minGroupSize: 1, groupRules: "Loaders #123456 = Loader; Text = TextEncode" }],
+  ["random-60-rules-only", randomWorkflow(60), { groupBy: "rules", groupRules: "Sampling = sampl; Images = image" }],
 ];
 
 const writeSvg = process.argv.includes("--svg");
@@ -205,6 +208,49 @@ for (const [name, wf, opts] of cases) {
     fs.writeFileSync(path.join(here, "out", `${name}-before.svg`), svg(model, before, model.groups));
     fs.writeFileSync(path.join(here, "out", `${name}-after.svg`), svg(model, res.nodes, groups));
   }
+}
+
+// --- grouping options -------------------------------------------------------
+{
+  const titles = (opts) => computeLayout(modelFromWorkflow(messy), { minGroupSize: 1, ...opts }).newGroups.map((g) => g.title).sort();
+  const groupsOf = (opts) => computeLayout(modelFromWorkflow(messy), { minGroupSize: 1, ...opts }).newGroups;
+  const eq = (a, b, msg) => check(JSON.stringify(a) === JSON.stringify(b), `${msg}: got ${JSON.stringify(a)}`);
+
+  eq(parseGroupRules("Loaders #3f789e = Loader|Checkpoint; Bad = (; Prompts = TextEncode\n = x; NoPattern =").map((r) => [r.name, r.color ?? null, r.re.source]), [["Loaders", "#3f789e", "Loader|Checkpoint"], ["Prompts", null, "TextEncode"]], "rule parsing");
+
+  // custom rules claim nodes first, the mode handles the rest
+  const ruled = groupsOf({ groupBy: "stage", groupRules: "Loaders #123456 = Loader; Text = TextEncode" });
+  check(ruled.some((g) => g.title === "Loaders" && g.color === "#123456"), "rule group with its color");
+  check(ruled.some((g) => g.title === "Text"), "second rule group");
+  check(!ruled.some((g) => g.title === "Models" || g.title === "Prompt"), "ruled nodes are not also grouped by stage");
+  check(ruled.some((g) => g.title === "Sampling"), "other nodes still grouped by stage");
+
+  // only rules
+  eq(titles({ groupBy: "rules", groupRules: "Text = TextEncode" }), ["Text"], "rules only");
+  eq(titles({ groupBy: "rules", groupRules: "" }), [], "rules only, no rules");
+
+  // by type
+  check(titles({ groupBy: "type" }).includes("CLIPTextEncode"), "group by type");
+
+  // by color
+  const colored = JSON.parse(JSON.stringify(messy));
+  const cm = modelFromWorkflow(colored);
+  cm.nodes.forEach((n) => { if (n.type === "CLIPTextEncode") n.color = "#322"; if (n.type === "KSampler") n.color = "#232"; });
+  eq(computeLayout(cm, { groupBy: "color", minGroupSize: 1 }).newGroups.length, 2, "group by color");
+
+  // exclude, template, find/replace, numbering
+  const base = titles({ groupBy: "stage" });
+  check(base.includes("Output") && base.includes("Models"), "stage groups present");
+  check(!titles({ groupBy: "stage", groupExclude: "Output|Models" }).some((t) => /Output|Models/.test(t)), "excluded groups are not created");
+  check(titles({ groupBy: "stage", groupTitleTemplate: "{name} ({count})" }).some((t) => /^Prompt \(2\)$/.test(t)), "name template with count");
+  check(titles({ groupBy: "stage", groupTitleRules: "Models => Loaders; Output => Results" }).includes("Loaders"), "name find/replace");
+  const numbered = groupsOf({ groupBy: "stage", groupTitleTemplate: "Stage", groupNumberDuplicates: true }).map((g) => g.title).sort();
+  check(numbered.length > 1 && numbered.every((t, i) => t === `Stage ${i + 1}`), "duplicate names are numbered");
+
+  // restyle existing groups
+  const ex = computeLayout(modelFromWorkflow(grouped), { groupRestyleExisting: true, groupFontSize: 30 });
+  check(ex.groupUpdates.length > 0 && ex.groupUpdates.every((u) => u.fontSize === 30), "existing groups get the title size");
+  check(computeLayout(modelFromWorkflow(grouped), {}).groupUpdates.every((u) => u.fontSize === undefined), "existing groups left alone by default");
 }
 
 if (failures) {

@@ -163,6 +163,9 @@ export function readModel(graph, nodes) {
     return {
       id: n.id,
       type: n.type ?? n.comfyClass,
+      title: n.title ?? "",
+      typeName: defaultTitle(n),
+      color: n.color,
       category: nodeCategory(like ?? n),
       stageLike: like ? { type: like.type ?? like.comfyClass, category: nodeCategory(like), isOutput: !!(like.constructor?.nodeData?.output_node ?? like.isOutputNode), isNote: false } : undefined,
       isOutput: !!(n.constructor?.nodeData?.output_node ?? n.isOutputNode),
@@ -474,6 +477,7 @@ export function prettifyNodes(app, graph, nodes, opts) {
     if (!g) continue;
     setGroupRect(g, u);
     if (u.color !== undefined) g.color = u.color;
+    if (u.fontSize) g.font_size = u.fontSize;
   }
   for (const idx of res.groupRemovals) {
     const g = groups[idx];

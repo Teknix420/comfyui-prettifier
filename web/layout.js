@@ -9,6 +9,7 @@
 //     titleH: number,                       // node title bar height
 //     nodes: [{
 //       id, type, category, isOutput, isNote, pinned, collapsed,
+//       title?, typeName?, color?,          // used by custom group rules / group by type / by color
 //       x, y, w, h,                         // current body position/size (pos/size in LiteGraph)
 //       fitW, fitH,                         // minimum size that still fits the content
 //       hasLargeContent,                    // images, text boxes, etc.
@@ -22,10 +23,12 @@
 // Result:
 //   {
 //     nodes: [{ id, x, y, w, h, stage, moved }],
-//     groupUpdates: [{ index, x, y, w, h, color? }],
+//     groupUpdates: [{ index, x, y, w, h, color?, fontSize? }],
 //     groupRemovals: [index],
 //     newGroups: [{ title, color, fontSize, x, y, w, h }],
 //   }
+
+import { fillTemplate, parseRules, applyRules } from "./rename.js";
 
 export const DEFAULTS = {
   direction: "LR", // LR | TB
@@ -50,7 +53,13 @@ export const DEFAULTS = {
   heightMode: "fit", // keep | fit
   shrinkLarge: false,
 
-  groupBy: "auto", // auto | existing | stage | category | component | none
+  groupBy: "auto", // auto | existing | stage | category | component | type | color | rules | none
+  groupRules: "", // "Name #color = pattern; ..." custom groups, checked before groupBy
+  groupExclude: "", // pattern: groups with a matching name are not created
+  groupTitleTemplate: "{name}", // {name} {count} {n} {stage}
+  groupTitleRules: "", // "find => replace; ..."
+  groupNumberDuplicates: false,
+  groupRestyleExisting: false,
   minGroupSize: 2,
   groupPadding: 20,
   groupFontSize: 24,
@@ -614,6 +623,45 @@ function sizeNode(n, o) {
 // ---------------------------------------------------------------------------
 // Clustering (groups)
 
+/**
+ * Custom group rules: "Name #color = pattern", separated by ; or new lines. The
+ * color is optional. The pattern is a regular expression (case-insensitive)
+ * tested against a node's type, title, category and pipeline stage.
+ */
+export function parseGroupRules(text) {
+  const rules = [];
+  for (const raw of String(text ?? "").split(/;|\n/)) {
+    const eq = raw.indexOf("=");
+    if (eq < 0) continue;
+    let name = raw.slice(0, eq).trim();
+    const src = raw.slice(eq + 1).trim();
+    if (!name || !src) continue;
+    let color;
+    const m = name.match(/\s(#[0-9a-f]{3,8})$/i);
+    if (m) {
+      color = m[1];
+      name = name.slice(0, m.index).trim();
+    }
+    let re;
+    try {
+      re = new RegExp(src, "i");
+    } catch {
+      continue;
+    }
+    if (name) rules.push({ name, color, re });
+  }
+  return rules;
+}
+
+const safeRe = (src) => {
+  if (!src) return null;
+  try {
+    return new RegExp(src, "i");
+  } catch {
+    return null;
+  }
+};
+
 function clusterKeys(nodes, edges, model, o) {
   const mode = o.groupBy === "auto" ? (model.groups?.length ? "existing" : "stage") : o.groupBy;
   const key = new Map();
@@ -633,8 +681,40 @@ function clusterKeys(nodes, edges, model, o) {
     return { mode, key, titles, colors };
   }
 
-  const eligible = nodes.filter((n) => !n.isNote);
-  if (mode === "stage") {
+  let eligible = nodes.filter((n) => !n.isNote);
+  // Custom rules claim their nodes first; the chosen mode handles the rest.
+  const rules = parseGroupRules(o.groupRules);
+  if (rules.length) {
+    const claimed = new Set();
+    for (const n of eligible) {
+      const fields = [n.type, n.title, n.typeName, n.category, stageOf(n)].map((v) => String(v ?? ""));
+      const i = rules.findIndex((r) => fields.some((f) => r.re.test(f)));
+      if (i < 0) continue;
+      key.set(n.id, "r:" + i);
+      titles.set("r:" + i, rules[i].name);
+      if (rules[i].color) colors.set("r:" + i, rules[i].color);
+      claimed.add(n.id);
+    }
+    eligible = eligible.filter((n) => !claimed.has(n.id));
+  }
+  if (mode === "type") {
+    for (const n of eligible) {
+      const k = "t:" + n.type;
+      key.set(n.id, k);
+      titles.set(k, n.typeName || titleCase(String(n.type ?? "Nodes")));
+    }
+  } else if (mode === "color") {
+    // Nodes the user gave the same color belong together; uncolored nodes stay loose.
+    const seen = new Map();
+    for (const n of [...eligible].sort((a, b) => a.y - b.y || a.x - b.x)) {
+      if (!n.color) continue;
+      const c = String(n.color).toLowerCase();
+      if (!seen.has(c)) seen.set(c, seen.size + 1);
+      const k = "col:" + seen.get(c);
+      key.set(n.id, k);
+      titles.set(k, `Group ${seen.get(c)}`);
+    }
+  } else if (mode === "stage") {
     for (const n of eligible) {
       const s = stageOf(n);
       key.set(n.id, "s:" + s);
@@ -658,6 +738,9 @@ function clusterKeys(nodes, edges, model, o) {
       titles.set("k:" + i, comps.length > 1 ? `Section ${i + 1}` : "Workflow");
     });
   }
+
+  const exclude = safeRe(o.groupExclude);
+  if (exclude) for (const [id, k] of [...key]) if (exclude.test(titles.get(k) ?? "")) key.delete(id);
 
   // Split clusters that would create cycles between groups (non-convex clusters),
   // otherwise the group layout would need backwards links.
@@ -696,6 +779,7 @@ function clusterKeys(nodes, edges, model, o) {
       for (const piece of pieces) {
         const nk = k.split("#")[0] + "#" + ++serial;
         titles.set(nk, title);
+        if (colors.has(k)) colors.set(nk, colors.get(k));
         for (const id of piece) key.set(id, nk);
       }
     }
@@ -1050,16 +1134,32 @@ export function computeLayout(model, userOpts = {}) {
       const upd = { index: gr.index, ...r };
       const col = colorFor(mem, gr.color);
       if (col !== gr.color) upd.color = col;
+      if (o.groupRestyleExisting) upd.fontSize = o.groupFontSize;
       result.groupUpdates.push(upd);
     }
   } else {
     for (const gr of existing) result.groupRemovals.push(gr.index);
+    const titleRules = parseRules(o.groupTitleRules);
+    const made = [];
     for (const [k, mem] of clusterMembers) {
       const ids = mem.map((n) => n.id);
       const r = rectAround(ids);
       if (!r) continue;
-      result.newGroups.push({ title: cl.titles.get(k) ?? "Group", color: colorFor(ids), fontSize: o.groupFontSize, ...r });
+      const name = cl.titles.get(k) ?? "Group";
+      let title = fillTemplate(o.groupTitleTemplate || "{name}", { name, count: ids.length, n: made.length + 1, stage: majorityStage(ids) });
+      title = applyRules(title, titleRules, name) || name;
+      // A color given by a custom rule wins over the color mode.
+      made.push({ title, color: cl.colors.get(k) ?? colorFor(ids), fontSize: o.groupFontSize, ...r });
     }
+    if (o.groupNumberDuplicates) {
+      const byTitle = new Map();
+      for (const g of made) byTitle.set(g.title, [...(byTitle.get(g.title) ?? []), g]);
+      for (const [t, list] of byTitle) {
+        if (list.length < 2) continue;
+        list.sort((a, b) => a.x - b.x || a.y - b.y).forEach((g, i) => (g.title = `${t} ${i + 1}`));
+      }
+    }
+    result.newGroups.push(...made);
   }
   return result;
 }
