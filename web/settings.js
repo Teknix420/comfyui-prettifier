@@ -66,6 +66,12 @@ export const OPTIONS = [
     opt("rules", "Only my custom rules"),
     opt("none", "No groups (removes groups)"),
   ], "Grouped nodes are laid out together and the group is sized to fit them."),
+  combo("packing", "Groups", "Arrangement", [
+    opt("flow", "Follow the flow (can get tall)"),
+    opt("pack", "Compact: pack separate pieces side by side"),
+    opt("wrap", "Most compact: also wrap tall columns"),
+  ], "How groups, and the nodes inside them, are arranged. Compact fills rows instead of one tall stack. Wrapping also splits a tall column into several, at the cost of some links passing other nodes."),
+  slider("packAspect", "Groups", "Target shape (width ÷ height)", 0.5, 4, 0.1, "Used by the compact arrangements. 1 is square, 1.6 is about the shape of a screen, higher is wider and flatter."),
   text("groupRules", "Groups", "Custom group rules", "Name = pattern, separated by ; . Add a color after the name if you like. The pattern is a regular expression matched against node type, title, category and pipeline stage. Rules are checked first, in order; other nodes follow 'Create groups by'. Example: Loaders #3f789e = Loader|Checkpoint; Prompts = TextEncode; Upscale = upscal"),
   text("groupExclude", "Groups", "Don't create groups named", "Regular expression matched against the group name. Example: Utilities|Other"),
   text("groupTitleTemplate", "Groups", "Group name template", "Tokens: {name} the group's name, {count} number of nodes, {n} group number, {stage} pipeline stage. Example: {n}. {name} ({count})"),

@@ -54,6 +54,8 @@ export const DEFAULTS = {
   shrinkLarge: false,
 
   groupBy: "auto", // auto | existing | stage | category | component | type | color | rules | none
+  packing: "flow", // flow | pack | wrap: how much to trade straight flow for a compact shape
+  packAspect: 1.6, // target width / height when packing
   groupRules: "", // "Name #color = pattern; ..." custom groups, checked before groupBy
   groupExclude: "", // pattern: groups with a matching name are not created
   groupTitleTemplate: "{name}", // {name} {count} {n} {stage}
@@ -269,26 +271,76 @@ export function layered(items, edges, o, opts = {}) {
     return ka[0] - kb[0] || ka[1] - kb[1];
   });
 
-  let cursor = 0, mainW = 0, mainH = 0;
-  for (const c of connected) {
+  // In this (possibly transposed) space the target shape is width / height.
+  const aspect = clamp(TB ? 1 / (o.packAspect || 1.6) : o.packAspect || 1.6, 0.2, 5);
+  const compact = o.packing === "pack" || o.packing === "wrap";
+  const inGroup = isolatedPlacement === "column";
+  const results = connected.map((c) => {
     const set = new Set(c);
-    const r = layoutComponent(
+    return layoutComponent(
       c.map((id) => byId.get(id)),
       eds.filter((e) => set.has(e.from)),
-      o
+      o,
+      aspect
     );
-    const dx = o.componentPacking === "horizontal" ? cursor : 0;
-    const dy = o.componentPacking === "horizontal" ? 0 : cursor;
-    for (const [id, p] of r.pos) pos.set(id, { x: p.x + dx, y: p.y + dy });
-    for (const [id, w] of r.width) width.set(id, w);
-    if (o.componentPacking === "horizontal") {
-      cursor += r.w + o.componentGap;
-      mainW = cursor - o.componentGap;
-      mainH = Math.max(mainH, r.h);
-    } else {
-      cursor += r.h + o.componentGap;
-      mainH = cursor - o.componentGap;
-      mainW = Math.max(mainW, r.w);
+  });
+
+  let cursor = 0, mainW = 0, mainH = 0;
+  // Compact: separate pieces sit side by side in rows that aim for the target
+  // shape, instead of one tall stack. Inside a group the loose nodes join in.
+  const blocks = results.map((r) => ({ w: r.w, h: r.h, r }));
+  if (compact && inGroup) {
+    isolated.sort((a, b) => a.origY - b.origY || a.origX - b.origX);
+    for (const it of isolated.splice(0)) blocks.push({ w: it.w, h: it.h, it });
+  }
+  if (compact && blocks.length > 1) {
+    const gx = inGroup ? o.hGap : o.componentGap, gy = inGroup ? o.vGap : o.componentGap;
+    const area = blocks.reduce((s, b) => s + (b.w + gx) * (b.h + gy), 0);
+    const limit = Math.max(Math.sqrt(area * aspect), ...blocks.map((b) => b.w));
+    let x = 0, y = 0, rowH = 0;
+    for (const b of blocks) {
+      if (x > 0 && x + b.w > limit) {
+        y += rowH + gy;
+        x = 0;
+        rowH = 0;
+      }
+      if (b.r) {
+        for (const [id, p] of b.r.pos) pos.set(id, { x: p.x + x, y: p.y + y });
+        for (const [id, w] of b.r.width) width.set(id, w);
+      } else {
+        pos.set(b.it.id, { x, y });
+        width.set(b.it.id, b.it.w);
+      }
+      mainW = Math.max(mainW, x + b.w);
+      mainH = Math.max(mainH, y + b.h);
+      x += b.w + gx;
+      rowH = Math.max(rowH, b.h);
+    }
+  } else {
+    for (const b of blocks) {
+      if (!b.r) {
+        // a single loose node in a group with nothing else to pack against
+        pos.set(b.it.id, { x: 0, y: cursor });
+        width.set(b.it.id, b.it.w);
+        cursor += b.it.h + o.vGap;
+        mainH = cursor - o.vGap;
+        mainW = Math.max(mainW, b.it.w);
+        continue;
+      }
+      const r = b.r;
+      const dx = o.componentPacking === "horizontal" ? cursor : 0;
+      const dy = o.componentPacking === "horizontal" ? 0 : cursor;
+      for (const [id, p] of r.pos) pos.set(id, { x: p.x + dx, y: p.y + dy });
+      for (const [id, w] of r.width) width.set(id, w);
+      if (o.componentPacking === "horizontal") {
+        cursor += r.w + o.componentGap;
+        mainW = cursor - o.componentGap;
+        mainH = Math.max(mainH, r.h);
+      } else {
+        cursor += r.h + o.componentGap;
+        mainH = cursor - o.componentGap;
+        mainW = Math.max(mainW, r.w);
+      }
     }
   }
 
@@ -358,7 +410,7 @@ export function layered(items, edges, o, opts = {}) {
   return { pos: outPos, width: outW, w: W, h: H };
 }
 
-function layoutComponent(items, edges, o) {
+function layoutComponent(items, edges, o, aspect = 1.6) {
   const byId = new Map(items.map((i) => [i.id, i]));
   const sorted = [...items].sort((a, b) => a.origX - b.origX || a.origY - b.origY);
   const out = new Map(items.map((i) => [i.id, []]));
@@ -518,6 +570,42 @@ function layoutComponent(items, edges, o) {
     }
     best.forEach((l, i) => (layers[i] = l));
     refreshRanks();
+  }
+
+  // 4b. Wrap tall columns: a column much taller than the target shape allows is
+  // split into several columns side by side. Flow still runs left to right, but
+  // links from the left part pass the right part.
+  if (o.packing === "wrap" && items.length > 2) {
+    const area = items.reduce((s, i) => s + (i.w + o.hGap) * (i.h + o.vGap), 0);
+    const maxH = Math.max(Math.sqrt(area / aspect), ...items.map((i) => i.h));
+    const wrapped = [];
+    for (const layer of layers) {
+      const total = layer.reduce((s, v) => s + byId.get(v).h + o.vGap, -o.vGap);
+      const k = Math.min(layer.length, Math.ceil(total / maxH));
+      if (k <= 1 || total <= maxH * 1.15) {
+        wrapped.push(layer);
+        continue;
+      }
+      const per = total / k;
+      let cur = [], h = 0;
+      const start = wrapped.length;
+      for (const v of layer) {
+        const vh = byId.get(v).h;
+        if (cur.length && h + vh / 2 > per && wrapped.length - start < k - 1) {
+          wrapped.push(cur);
+          cur = [];
+          h = 0;
+        }
+        cur.push(v);
+        h += vh + o.vGap;
+      }
+      wrapped.push(cur);
+    }
+    if (wrapped.length !== layers.length) {
+      layers.splice(0, layers.length, ...wrapped);
+      layers.forEach((layer, i) => layer.forEach((v) => L.set(v, i)));
+      refreshRanks();
+    }
   }
 
   // 5. Column widths (flex nodes share their column's width).

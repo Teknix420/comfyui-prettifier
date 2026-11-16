@@ -119,7 +119,7 @@ connectors that would end up with the same label are numbered. Inside a subgraph
 | Layout | Flow direction, column assignment, vertical alignment, alignment inside a column, crossing reduction passes, link straightening iterations, respect current order |
 | Spacing | Horizontal, vertical and section gaps, snap to grid, grid size, anchor |
 | Sizing | Node width mode, fixed/min/max width, node height mode, shrink nodes with images or text |
-| Groups | Group by (auto, existing, stage, category, section, node type, node color, only my rules, none), custom group rules, groups not to create, name template, name find/replace, number duplicate names, restyle existing groups, minimum group size, category depth, padding, title size, color mode, single color |
+| Groups | Arrangement (follow the flow, compact, most compact), target shape, group by (auto, existing, stage, category, section, node type, node color, only my rules, none), custom group rules, groups not to create, name template, name find/replace, number duplicate names, restyle existing groups, minimum group size, category depth, padding, title size, color mode, single color |
 | Placement | Unconnected nodes, notes, separate sections, never move pinned nodes |
 | Links | Reroute dots (auto, remove, keep), route around groups, clearance, minimum link length, replace links with variables (long, blocked, both), length that counts as long, variable name template, collapse variable nodes |
 | Nodes | Collapse mode and pattern, muted/bypassed style, subgraphs, subgraph connector order |
@@ -128,6 +128,18 @@ connectors that would end up with the same label are numbered. Inside a subgraph
 | Appearance | Palette, custom palette JSON, node colors, link style, animation, zoom to fit |
 | Behavior | Scope, prettify on open/save, remember and use per-workflow options, summary message |
 | Lint | Check on prettify, each check on/off, step and CFG thresholds |
+
+### Compact arrangement
+
+By default everything follows the flow, which can make a group of unconnected
+nodes (a dozen loaders, say) one tall stack. **Groups → Arrangement** changes that:
+
+- *Compact* packs separate pieces side by side in rows: the nodes inside a group
+  that are not linked to each other, and separate sections of the workflow.
+- *Most compact* also splits a tall column of linked nodes or groups into several
+  columns. Flow still runs left to right, but some links then pass other nodes.
+
+"Target shape" sets how wide the result should be compared to its height.
 
 ### Custom groups
 

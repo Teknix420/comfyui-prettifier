@@ -188,6 +188,14 @@ const cases = [
   ["messy-type", messy, { groupBy: "type", minGroupSize: 1 }],
   ["messy-rules", messy, { groupBy: "stage", minGroupSize: 1, groupRules: "Loaders #123456 = Loader; Text = TextEncode" }],
   ["random-60-rules-only", randomWorkflow(60), { groupBy: "rules", groupRules: "Sampling = sampl; Images = image" }],
+  ["messy-pack", messy, { groupBy: "stage", minGroupSize: 1, packing: "pack" }],
+  ["messy-wrap", messy, { groupBy: "stage", minGroupSize: 1, packing: "wrap" }],
+  ["messy-wrap-TB", messy, { direction: "TB", packing: "wrap" }],
+  ["grouped-existing-wrap", grouped, { packing: "wrap" }],
+  ["random-60-stage-pack", randomWorkflow(60), { groupBy: "stage", packing: "pack" }],
+  ["random-60-stage-wrap", randomWorkflow(60), { groupBy: "stage", packing: "wrap", packAspect: 2.5 }],
+  ["random-150-none-wrap", randomWorkflow(150, 3), { groupBy: "none", packing: "wrap" }],
+  ["random-150-type-wrap", randomWorkflow(150, 3), { groupBy: "type", minGroupSize: 1, packing: "wrap", packAspect: 1 }],
 ];
 
 const writeSvg = process.argv.includes("--svg");
@@ -251,6 +259,44 @@ for (const [name, wf, opts] of cases) {
   const ex = computeLayout(modelFromWorkflow(grouped), { groupRestyleExisting: true, groupFontSize: 30 });
   check(ex.groupUpdates.length > 0 && ex.groupUpdates.every((u) => u.fontSize === 30), "existing groups get the title size");
   check(computeLayout(modelFromWorkflow(grouped), {}).groupUpdates.every((u) => u.fontSize === undefined), "existing groups left alone by default");
+}
+
+// --- compact arrangement ------------------------------------------------------
+{
+  // Eight loaders feeding one sampler, plus four unconnected loaders: a very tall "Models" group.
+  const wf = { nodes: [], links: [] };
+  for (let i = 0; i < 12; i++) wf.nodes.push({ id: i + 1, type: "CheckpointLoaderSimple", category: "loaders", pos: [0, i * 150], size: [300, 100], outputs: [{}], widgets_values: ["x"] });
+  wf.nodes.push({ id: 50, type: "KSampler", category: "sampling", pos: [600, 0], size: [300, 260], inputs: Array.from({ length: 8 }, () => ({})), outputs: [{}], widgets_values: [1, 2, 3] });
+  for (let i = 0; i < 8; i++) wf.links.push([i + 1, i + 1, 0, 50, i]);
+  const shape = (opts) => {
+    const model = modelFromWorkflow(wf);
+    const res = computeLayout(model, { groupBy: "stage", minGroupSize: 1, ...opts });
+    validate("fan-in " + JSON.stringify(opts), model, res, { ...DEFAULTS, ...opts });
+    const xs = res.nodes.map((n) => [n.x, n.x + n.w]).flat(), ys = res.nodes.map((n) => [n.y, n.y + n.h]).flat();
+    const models = res.newGroups.find((g) => g.title === "Models");
+    return { w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys), gw: models.w, gh: models.h };
+  };
+  // With a "Models" group the loaders are separate pieces inside it: packing fills rows.
+  const flow = shape({}), pack = shape({ packing: "pack" }), wide = shape({ packing: "pack", packAspect: 3 }), wrap = pack;
+  console.log(`fan-in grouped: flow ${Math.round(flow.w)}x${Math.round(flow.h)}, pack ${Math.round(pack.w)}x${Math.round(pack.h)}, pack wide ${Math.round(wide.w)}x${Math.round(wide.h)}`);
+  check(flow.gh > 1300, "flow: the models group is one tall stack");
+  check(pack.h < flow.h * 0.8, "pack is shorter than flow");
+  check(wide.h <= pack.h && wide.gw / wide.gh > pack.gw / pack.gh, "a wider target shape gives a flatter group");
+  // Without groups the eight connected loaders are one tall column: only wrapping helps.
+  const size = (opts) => {
+    const model = modelFromWorkflow(wf);
+    const res = computeLayout(model, { groupBy: "none", isolatedPlacement: "right", ...opts });
+    validate("fan-in loose " + JSON.stringify(opts), model, res, { ...DEFAULTS, ...opts });
+    const linked = res.nodes.filter((n) => n.id <= 8 || n.id === 50);
+    const ys = linked.map((n) => [n.y, n.y + n.h]).flat(), xs = linked.map((n) => n.x);
+    return { h: Math.max(...ys) - Math.min(...ys), cols: new Set(xs.map((x) => Math.round(x))).size, samplerX: res.nodes.find((n) => n.id === 50).x, maxLoaderX: Math.max(...linked.filter((n) => n.id <= 8).map((n) => n.x)) };
+  };
+  const f2 = size({}), p2 = size({ packing: "pack" }), w2 = size({ packing: "wrap" });
+  console.log(`fan-in loose: flow height ${Math.round(f2.h)} in ${f2.cols} columns, wrap height ${Math.round(w2.h)} in ${w2.cols} columns`);
+  check(p2.h === f2.h, "pack alone leaves a connected column as it is");
+  check(w2.h < f2.h * 0.75 && w2.cols > f2.cols, "wrap splits the tall column");
+  check(w2.samplerX > w2.maxLoaderX, "flow still runs left to right after wrapping");
+  check(wrap.gw / wrap.gh > 0.6 && wrap.gw / wrap.gh < 4, "wrapped group is roughly the target shape");
 }
 
 if (failures) {
