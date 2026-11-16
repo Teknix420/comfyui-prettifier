@@ -1,0 +1,252 @@
+// ComfyUI Prettifier - options dialog with live preview.
+
+import { OPTIONS, SECTIONS, PRESETS, ALL_DEFAULTS, readOptions, setOption } from "./settings.js";
+import { activeGraph, takeSnapshot, restoreSnapshot, cancelAnimation, changeTracker } from "./graph.js";
+import { prettify } from "./core.js";
+
+const STYLE_ID = "prettifier-dialog-style";
+const CSS = `
+.pf-overlay{position:fixed;inset:0;z-index:10000;display:flex;align-items:flex-start;justify-content:flex-end;pointer-events:none}
+.pf-dialog{pointer-events:auto;margin:60px 16px 16px;width:420px;max-width:calc(100vw - 32px);max-height:calc(100vh - 80px);display:flex;flex-direction:column;
+  background:var(--comfy-menu-bg,#202020);color:var(--fg-color,#ddd);border:1px solid var(--border-color,#444);border-radius:10px;box-shadow:0 10px 40px rgba(0,0,0,.5);font:13px/1.4 system-ui,sans-serif}
+.pf-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--border-color,#444);cursor:move;user-select:none}
+.pf-head h3{margin:0;font-size:15px;flex:1}
+.pf-x{background:none;border:0;color:inherit;font-size:18px;cursor:pointer;opacity:.7}
+.pf-x:hover{opacity:1}
+.pf-bar{display:flex;gap:8px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--border-color,#444);flex-wrap:wrap}
+.pf-tabs{display:flex;gap:4px;padding:8px 10px 0;flex-wrap:wrap}
+.pf-tab{background:none;border:1px solid transparent;border-bottom:0;color:inherit;opacity:.7;padding:6px 10px;border-radius:6px 6px 0 0;cursor:pointer;font:inherit}
+.pf-tab.on{opacity:1;background:var(--comfy-input-bg,#2a2a2a);border-color:var(--border-color,#444)}
+.pf-body{overflow:auto;padding:10px 14px;flex:1;background:var(--comfy-input-bg,#2a2a2a);margin:0 10px;border:1px solid var(--border-color,#444);border-radius:0 6px 6px 6px}
+.pf-row{display:grid;grid-template-columns:1fr 170px;gap:10px;align-items:center;padding:6px 0;border-bottom:1px dashed rgba(127,127,127,.15)}
+.pf-row:last-child{border-bottom:0}
+.pf-row label{cursor:help}
+.pf-row select,.pf-row input[type=text],.pf-bar select{width:100%;background:var(--comfy-menu-bg,#202020);color:inherit;border:1px solid var(--border-color,#444);border-radius:5px;padding:4px 6px;font:inherit}
+.pf-bar select{width:auto}
+.pf-slider{display:flex;gap:6px;align-items:center}
+.pf-slider input[type=range]{flex:1;min-width:0}
+.pf-slider input[type=number]{width:56px;background:var(--comfy-menu-bg,#202020);color:inherit;border:1px solid var(--border-color,#444);border-radius:5px;padding:3px 4px;font:inherit}
+.pf-foot{display:flex;gap:8px;padding:12px 14px;justify-content:flex-end;flex-wrap:wrap}
+.pf-btn{background:var(--comfy-input-bg,#2a2a2a);color:inherit;border:1px solid var(--border-color,#444);border-radius:6px;padding:6px 12px;cursor:pointer;font:inherit}
+.pf-btn:hover{filter:brightness(1.2)}
+.pf-btn.primary{background:#3f789e;border-color:#3f789e;color:#fff}
+.pf-spacer{flex:1}
+.pf-check{display:flex;gap:6px;align-items:center;cursor:pointer}
+`;
+
+let open = null;
+
+export function openDialog(app) {
+  if (open) {
+    open.focus();
+    return;
+  }
+  if (!document.getElementById(STYLE_ID)) {
+    const st = document.createElement("style");
+    st.id = STYLE_ID;
+    st.textContent = CSS;
+    document.head.appendChild(st);
+  }
+
+  const values = readOptions(app);
+  const initial = { ...values };
+  // Keep previews out of the undo history; one entry is recorded when the dialog closes.
+  const tracker = changeTracker(app);
+  tracker?.beforeChange?.();
+  let snapshot = null; // taken on first preview
+  let live = true;
+  let scope = values.scope;
+  let section = SECTIONS[0];
+  let previewTimer = 0;
+
+  const el = (tag, attrs = {}, ...children) => {
+    const e = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "class") e.className = v;
+      else if (k.startsWith("on")) e.addEventListener(k.slice(2), v);
+      else if (v !== undefined && v !== null) e.setAttribute(k, v);
+    }
+    for (const c of children) if (c != null) e.append(c);
+    return e;
+  };
+
+  const overlay = el("div", { class: "pf-overlay" });
+  const dialog = el("div", { class: "pf-dialog", role: "dialog", "aria-label": "Prettifier" });
+  overlay.append(dialog);
+
+  // Header (draggable)
+  const head = el("div", { class: "pf-head" }, el("h3", {}, "✨ Prettify workflow"), el("button", { class: "pf-x", title: "Close", onclick: () => cancel() }, "×"));
+  dialog.append(head);
+  let drag = null;
+  head.addEventListener("pointerdown", (e) => {
+    if (e.target.closest("button")) return;
+    const r = dialog.getBoundingClientRect();
+    drag = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    head.setPointerCapture(e.pointerId);
+  });
+  head.addEventListener("pointermove", (e) => {
+    if (!drag) return;
+    overlay.style.justifyContent = "flex-start";
+    dialog.style.margin = "0";
+    dialog.style.position = "fixed";
+    dialog.style.left = Math.max(0, e.clientX - drag.dx) + "px";
+    dialog.style.top = Math.max(0, e.clientY - drag.dy) + "px";
+  });
+  head.addEventListener("pointerup", () => (drag = null));
+
+  // Top bar: preset, scope, live preview
+  const presetSel = el("select", { title: "Load a preset (changes your saved options)" }, el("option", { value: "" }, "Preset…"), ...Object.keys(PRESETS).map((p) => el("option", { value: p }, p)));
+  presetSel.addEventListener("change", async () => {
+    const p = PRESETS[presetSel.value];
+    presetSel.value = "";
+    if (!p) return;
+    const next = { ...ALL_DEFAULTS, ...p };
+    for (const o of OPTIONS) {
+      if (values[o.key] !== next[o.key]) {
+        values[o.key] = next[o.key];
+        await setOption(app, o.key, next[o.key]);
+      }
+    }
+    renderBody();
+    schedulePreview();
+  });
+  const scopeSel = el("select", { title: "What to rearrange" }, el("option", { value: "auto" }, "Auto scope"), el("option", { value: "all" }, "Whole workflow"), el("option", { value: "selection" }, "Selection only"));
+  scopeSel.value = scope;
+  scopeSel.addEventListener("change", () => {
+    scope = scopeSel.value;
+    schedulePreview();
+  });
+  const liveBox = el("input", { type: "checkbox" });
+  liveBox.checked = live;
+  liveBox.addEventListener("change", () => {
+    live = liveBox.checked;
+    if (live) schedulePreview();
+    else revert();
+  });
+  dialog.append(el("div", { class: "pf-bar" }, presetSel, scopeSel, el("span", { class: "pf-spacer" }), el("label", { class: "pf-check", title: "Re-arrange the canvas as you change options" }, liveBox, "Live preview")));
+
+  // Tabs + body
+  const tabs = el("div", { class: "pf-tabs" });
+  const body = el("div", { class: "pf-body" });
+  dialog.append(tabs, body);
+  const renderTabs = () => {
+    tabs.replaceChildren(
+      ...SECTIONS.map((s) =>
+        el("button", { class: "pf-tab" + (s === section ? " on" : ""), onclick: () => ((section = s), renderTabs(), renderBody()) }, s)
+      )
+    );
+  };
+
+  const commit = async (key, v) => {
+    values[key] = v;
+    await setOption(app, key, v);
+    schedulePreview();
+  };
+
+  const control = (o) => {
+    const v = values[o.key];
+    if (o.type === "boolean") {
+      const c = el("input", { type: "checkbox" });
+      c.checked = !!v;
+      c.addEventListener("change", () => commit(o.key, c.checked));
+      return c;
+    }
+    if (o.type === "combo") {
+      const s = el("select", {}, ...o.options.map((x) => el("option", { value: x.value }, x.text)));
+      s.value = v;
+      s.addEventListener("change", () => commit(o.key, s.value));
+      return s;
+    }
+    if (o.type === "slider") {
+      const r = el("input", { type: "range", min: o.attrs.min, max: o.attrs.max, step: o.attrs.step });
+      const n = el("input", { type: "number", min: o.attrs.min, max: o.attrs.max, step: o.attrs.step });
+      r.value = n.value = v;
+      r.addEventListener("input", () => {
+        n.value = r.value;
+        commit(o.key, Number(r.value));
+      });
+      n.addEventListener("change", () => {
+        r.value = n.value;
+        commit(o.key, Number(n.value));
+      });
+      return el("div", { class: "pf-slider" }, r, n);
+    }
+    const t = el("input", { type: "text", value: v ?? "" });
+    t.addEventListener("change", () => commit(o.key, t.value));
+    return t;
+  };
+
+  const renderBody = () => {
+    body.replaceChildren(
+      ...OPTIONS.filter((o) => o.section === section && o.key !== "scope").map((o) =>
+        el("div", { class: "pf-row" }, el("label", { title: o.tooltip ?? "" }, o.name), control(o))
+      )
+    );
+  };
+
+  // Footer
+  const resetBtn = el("button", { class: "pf-btn", title: "Reset every option to its default" }, "Reset defaults");
+  resetBtn.addEventListener("click", () => {
+    presetSel.value = "Default";
+    presetSel.dispatchEvent(new Event("change"));
+  });
+  const cancelBtn = el("button", { class: "pf-btn" }, "Cancel");
+  cancelBtn.addEventListener("click", () => cancel());
+  const applyBtn = el("button", { class: "pf-btn primary" }, "Apply");
+  applyBtn.addEventListener("click", () => apply());
+  dialog.append(el("div", { class: "pf-foot" }, resetBtn, el("span", { class: "pf-spacer" }), cancelBtn, applyBtn));
+
+  // Behaviour
+  function revert() {
+    clearTimeout(previewTimer);
+    cancelAnimation();
+    if (snapshot) {
+      restoreSnapshot(snapshot);
+      app.canvas?.setDirty?.(true, true);
+    }
+  }
+  function schedulePreview() {
+    if (!live) return;
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(() => {
+      const graph = activeGraph(app);
+      if (!snapshot || snapshot.graph !== graph) snapshot = takeSnapshot(graph);
+      else revert();
+      prettify(app, { scope, overrides: { ...values, fitView: false }, animate: false, recordUndo: false, quiet: true });
+    }, 120);
+  }
+  function apply() {
+    revert();
+    prettify(app, { scope, overrides: values, animate: !snapshot && values.animate });
+    snapshot = null;
+    close();
+  }
+  function cancel() {
+    revert();
+    snapshot = null;
+    // Cancel also discards option changes made in the dialog.
+    for (const o of OPTIONS) if (values[o.key] !== initial[o.key]) setOption(app, o.key, initial[o.key]);
+    close();
+  }
+  const onKey = (e) => {
+    if (e.key === "Escape") {
+      e.stopPropagation();
+      cancel();
+    }
+  };
+  function close() {
+    document.removeEventListener("keydown", onKey, true);
+    overlay.remove();
+    open = null;
+    try {
+      tracker?.afterChange?.();
+    } catch {}
+  }
+
+  document.addEventListener("keydown", onKey, true);
+  renderTabs();
+  renderBody();
+  document.body.append(overlay);
+  open = { focus: () => dialog.querySelector("select,input,button")?.focus() };
+  schedulePreview();
+}

@@ -1,0 +1,14 @@
+[project]
+name = "comfyui-prettifier"
+description = "Rearranges ComfyUI workflows to be readable and good looking: auto-layout, link straightening, resizing, grouping and alignment, with lots of options."
+version = "0.1.0"
+license = { file = "LICENSE" }
+dependencies = []
+
+[project.urls]
+Repository = ""
+
+[tool.comfy]
+PublisherId = ""
+DisplayName = "Prettifier"
+Icon = ""
