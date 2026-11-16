@@ -95,6 +95,11 @@ export const OPTIONS = [
   text("collapseMatch", "Nodes", "Collapse nodes matching", "Regular expression matched against node type, title and pipeline stage. Example: Loader|Primitive|Utilities"),
   combo("inactiveStyle", "Nodes", "Muted and bypassed nodes", [opt("keep", "Don't change"), opt("dim", "Dim"), opt("collapse", "Collapse"), opt("both", "Dim and collapse")]),
   combo("subgraphMode", "Nodes", "Subgraphs", [opt("all", "Prettify inside every subgraph too"), opt("current", "Only the graph I'm looking at")], "Applies when prettifying a whole workflow."),
+  combo("subgraphSlotOrder", "Nodes", "Subgraph connector order", [
+    opt("keep", "Don't change"),
+    opt("inside", "Match the layout inside the subgraph"),
+    opt("outside", "Match the nodes around the subgraph"),
+  ], "Reorders a subgraph's inputs and outputs so fewer links cross. Inside: follows the nodes they connect to within the subgraph. Outside: follows the nodes connected to the subgraph node on the parent canvas."),
 
   // Notes
   bool("autoNote", "Notes", "Keep a summary note up to date", "Adds a note listing models, LoRAs, resolution, sampler settings and seeds, and refreshes it on every prettify."),
@@ -127,6 +132,9 @@ export const OPTIONS = [
   bool("slotIncludeWidgets", "Renaming", "Also relabel widget inputs", "Widgets (seed, steps, text…) double as inputs. When off, they are only relabelled if something is connected to them."),
   combo("slotLabelCase", "Renaming", "Connector capitalization", [opt("none", "Don't change"), opt("title", "Title Case (latent_image → Latent Image)"), opt("upper", "UPPERCASE"), opt("lower", "lowercase")]),
   text("slotLabelRules", "Renaming", "Connector find/replace rules", "find => replace, separated by ; . Prefix with a data type filter using :: . Example: CONDITIONING :: ^positive$ => + prompt; _ => (space)"),
+
+  combo("subgraphSlotMode", "Renaming", "Subgraph connectors", [opt("keep", "Don't change"), opt("reset", "Reset to original names"), opt("type", "Show data type (MODEL, LATENT…)"), opt("template", "Use template")], "Renames a subgraph's own inputs and outputs: the panels inside it and the connectors on the subgraph node. Uses the connector capitalization and find/replace rules."),
+  text("subgraphSlotTemplate", "Renaming", "Subgraph connector template", "Tokens: {name} original name, {label} current label, {type} data type, {inner} name of the connector it is wired to inside, {node} title of that inside node, {source} title of the node feeding it on the parent canvas, {subgraph} subgraph name. Example: {node}: {inner}"),
 
   // Behavior
   combo("scope", "Behavior", "Prettify what", [
@@ -166,6 +174,7 @@ export const EXTRA_DEFAULTS = {
   collapseMatch: "Loader|Primitive",
   inactiveStyle: "keep",
   subgraphMode: "all",
+  subgraphSlotOrder: "keep",
   autoNote: false,
   noteStyle: "markdown",
   noteTitle: "Workflow summary",
@@ -194,6 +203,8 @@ export const PRESETS = {
     slotLabelMode: "template",
     slotLabelTemplate: "{name}",
     slotLabelCase: "title",
+    subgraphSlotMode: "template",
+    subgraphSlotTemplate: "{name}",
   },
   "Tidy only": { widthMode: "keep", heightMode: "keep", groupBy: "existing", colorNodes: "keep", layering: "early" },
 };

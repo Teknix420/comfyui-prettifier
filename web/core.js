@@ -27,6 +27,7 @@ import {
   placeSubgraphIO,
   runLint,
 } from "./extras.js";
+import { isSubgraph, subgraphsInnerFirst, renameSubgraphSlots, reorderSubgraphSlots, snapshotSubgraphIO, restoreSubgraphIO } from "./subgraphs.js";
 
 let lastSnapshot = null;
 
@@ -65,10 +66,18 @@ export function effectiveOptions(app) {
 
 export function snapshotAll(app, graph) {
   const graphs = [graph, ...allSubgraphs(app).filter((g) => g !== graph)];
-  return { graph, parts: graphs.map((g) => ({ main: takeSnapshot(g), reroutes: snapshotReroutes(g) })) };
+  return { app, graph, parts: graphs.map((g) => ({ main: takeSnapshot(g), reroutes: snapshotReroutes(g), io: snapshotSubgraphIO(g) })) };
 }
 
 export function restoreAll(snap) {
+  // Subgraph connector order first: node snapshots address connectors by position.
+  for (const part of snap.parts) {
+    try {
+      restoreSubgraphIO(snap.app, part.io);
+    } catch (err) {
+      console.warn("[Prettifier] could not restore subgraph connectors", err);
+    }
+  }
   for (const part of snap.parts) {
     restoreSnapshot(part.main);
     try {
@@ -88,7 +97,12 @@ function runPasses(app, graph, nodes, o, { isSelection, noHistory, isChild }) {
     const r = upsertSummaryNote(graph, o);
     if (r?.created) nodes = graphNodes(graph);
   }
-  if (o.renameOnPrettify) stats.renamed = renameNodes(graph, nodes, o);
+  if (o.renameOnPrettify) {
+    // A subgraph's own connectors are renamed first so {source} inside it sees the new names.
+    const io = !isSelection && isSubgraph(graph) ? renameSubgraphSlots(app, graph, o) : 0;
+    stats.renamed = renameNodes(graph, nodes, renameOpts(o));
+    stats.renamed.labels += io;
+  }
   const r = prettifyNodes(app, graph, nodes, {
     ...o,
     isSelection,
@@ -104,8 +118,15 @@ function runPasses(app, graph, nodes, o, { isSelection, noHistory, isChild }) {
   if (o.inactiveStyle === "dim" || o.inactiveStyle === "both") applyCollapseRules(nodes, { ...o, collapseMode: "keep", inactiveStyle: "dim" });
   stats.moved = r.moved;
   stats.groups = r.groups;
+  if (!isSelection && isSubgraph(graph)) {
+    if (o.subgraphSlotOrder === "inside") reorderSubgraphSlots(app, graph, "inside");
+    placeSubgraphIO(graph, Math.max(60, o.hGap));
+  }
   return stats;
 }
+
+// Subgraph nodes take their connector names from the subgraph when those are managed.
+const renameOpts = (o) => ({ ...o, manageSubgraphSlots: o.subgraphSlotMode !== "keep" && o.subgraphMode === "all" });
 
 /**
  * Prettify the workflow (or selection).
@@ -126,20 +147,31 @@ export function prettify(app, { scope, overrides, animate, recordUndo = true, qu
   const tracker = recordUndo ? changeTracker(app) : null;
   tracker?.beforeChange?.();
   try {
-    stats = runPasses(app, graph, nodes, o, { isSelection, noHistory: !recordUndo, isChild: false });
-    if (o.subgraphMode === "all" && !isSelection) {
-      for (const sg of allSubgraphs(app)) {
+    // Subgraphs go first (innermost first): reordering their connectors changes the
+    // subgraph nodes that the outer layout then lines up.
+    const child = { moved: 0, groups: 0, labels: 0, count: 0 };
+    const withSubgraphs = o.subgraphMode === "all" && !isSelection;
+    if (withSubgraphs) {
+      for (const sg of subgraphsInnerFirst(app)) {
         if (sg === graph) continue;
         const inner = graphNodes(sg);
         if (!inner.length) continue;
         const s = runPasses(app, sg, inner, o, { isSelection: false, noHistory: true, isChild: true });
-        placeSubgraphIO(sg, Math.max(60, o.hGap));
-        stats.moved += s.moved;
-        stats.groups += s.groups;
-        stats.subgraphs = (stats.subgraphs || 0) + 1;
+        child.moved += s.moved;
+        child.groups += s.groups;
+        child.labels += s.renamed.labels;
+        child.count++;
       }
-    } else if (!isSelection && graph !== (app.rootGraph ?? app.graph)) {
-      placeSubgraphIO(graph, Math.max(60, o.hGap));
+    }
+    stats = runPasses(app, graph, nodes, o, { isSelection, noHistory: !recordUndo, isChild: false });
+    stats.moved += child.moved;
+    stats.groups += child.groups;
+    stats.renamed.labels += child.labels;
+    if (child.count) stats.subgraphs = child.count;
+    if (o.subgraphSlotOrder === "outside" && !isSelection) {
+      for (const sg of withSubgraphs ? subgraphsInnerFirst(app) : isSubgraph(graph) ? [graph] : []) {
+        if (reorderSubgraphSlots(app, sg, "outside")) placeSubgraphIO(sg, Math.max(60, o.hGap));
+      }
     }
     if (recordUndo && !isSelection) {
       if (o.rememberWorkflowOptions && !quiet) rememberWorkflowOptions(app, o, ALL_DEFAULTS);
@@ -178,12 +210,20 @@ export function renameOnly(app, { scope } = {}) {
     toast(app, "warn", "Prettifier", isSelection ? "Select some nodes first." : "The workflow is empty.");
     return null;
   }
-  if (o.nodeTitleMode === "keep" && o.slotLabelMode === "keep") {
+  if (o.nodeTitleMode === "keep" && o.slotLabelMode === "keep" && o.subgraphSlotMode === "keep") {
     toast(app, "info", "Prettifier", "No renaming rules are set. Open Prettifier options, Renaming tab.");
     return null;
   }
   lastSnapshot = snapshotAll(app, graph);
-  const r = renameNodes(graph, nodes, o);
+  const r = { titles: 0, labels: 0 };
+  const targets = [{ graph, nodes }];
+  if (!isSelection && o.subgraphMode === "all") for (const sg of subgraphsInnerFirst(app)) if (sg !== graph) targets.push({ graph: sg, nodes: graphNodes(sg) });
+  for (const t of targets) {
+    if (!isSelection && isSubgraph(t.graph)) r.labels += renameSubgraphSlots(app, t.graph, o);
+    const part = renameNodes(t.graph, t.nodes, renameOpts(o));
+    r.titles += part.titles;
+    r.labels += part.labels;
+  }
   notifyChanged(app, graph);
   app.canvas?.setDirty?.(true, true);
   if (o.showToast) toast(app, "success", "Renamed", `${r.titles} node title${r.titles === 1 ? "" : "s"}, ${r.labels} connector label${r.labels === 1 ? "" : "s"}.`);

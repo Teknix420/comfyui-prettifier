@@ -289,6 +289,10 @@ function setSlotLabel(slot, label) {
   else slot.label = label;
 }
 
+export function isSubgraphNode(n) {
+  return !!n && ((typeof n.isSubgraphNode === "function" && n.isSubgraphNode()) || (!!n.subgraph && typeof n.subgraph === "object" && Array.isArray(n.subgraph.inputs)));
+}
+
 export function nodeCategory(n) {
   return n.constructor?.nodeData?.category ?? n.constructor?.category ?? n.category ?? "";
 }
@@ -324,14 +328,21 @@ export function renameNodes(graph, nodes, opts) {
       widgets,
       inputs: (n.inputs || []).map((slot) => {
         const link = getLink(graph, slot?.link);
+        const sourceId = link ? link.origin_id ?? link[1] : null;
+        const sourceSlot = link ? link.origin_slot ?? link[2] : null;
+        // Inside a subgraph, an input can be fed by the subgraph's own input panel.
+        const panel = link && graph.inputNode && sourceId == graph.inputNode.id ? graph.inputs?.[sourceSlot] : null;
+        const panelName = panel ? panel.label || panel.localized_name || panel.name || "" : undefined;
         return {
           name: slot?.localized_name || slot?.name || "",
           type: slot?.type,
           label: slot?.label,
           connected: !!link,
           isWidget: !!slot?.widget,
-          sourceId: link ? link.origin_id ?? link[1] : null,
-          sourceSlot: link ? link.origin_slot ?? link[2] : null,
+          sourceId,
+          sourceSlot,
+          sourceTitle: panelName,
+          sourceSlotName: panelName,
         };
       }),
       outputs: (n.outputs || []).map((slot) => ({
@@ -348,6 +359,8 @@ export function renameNodes(graph, nodes, opts) {
   for (const [id, title] of res.titles) byId.get(id).title = title;
   for (const [side, map] of [["inputs", res.inputs], ["outputs", res.outputs]]) {
     for (const [id, list] of map) {
+      // A subgraph node's connectors follow the subgraph's own inputs / outputs.
+      if (opts.manageSubgraphSlots && isSubgraphNode(byId.get(id))) continue;
       const slots = byId.get(id)[side] || [];
       list.forEach((label, i) => {
         if (label === undefined || !slots[i]) return;

@@ -1,5 +1,5 @@
 // Run with: node tests/test_rename.mjs
-import { computeRenames, fillTemplate, applyCase, parseRules } from "../web/rename.js";
+import { computeRenames, computeSubgraphSlotLabels, fillTemplate, applyCase, parseRules } from "../web/rename.js";
 import assert from "node:assert/strict";
 
 const nodes = [
@@ -64,4 +64,32 @@ r = computeRenames(labelled, { slotLabelMode: "reset" });
 assert.deepEqual(r.inputs.get(4), [null, undefined]);
 
 assert.equal(parseRules("a => b; bad( => c; T :: x => y").length, 2);
+// {source} for an input fed by something that is not a node (a subgraph's input panel)
+r = computeRenames([{ id: 9, title: "Sampler", type: "KSampler", x: 0, y: 0, inputs: [{ name: "model", type: "MODEL", connected: true, sourceId: -10, sourceSlot: 0, sourceTitle: "Base model", sourceSlotName: "Base model" }], outputs: [] }], { slotLabelMode: "template", slotLabelTemplate: "{name}[ ← {source}]" });
+assert.deepEqual(r.inputs.get(9), ["model ← Base model"]);
+
+// subgraph connectors
+const sgSlots = [
+  { name: "clip", type: "CLIP", connected: true, inner: "clip", node: "Positive", source: "Load LoRA" },
+  { name: "latent_image", type: "LATENT", connected: true, inner: "latent_image", node: "KSampler", source: "" },
+  { name: "text", type: "STRING", connected: true, inner: "text", node: "Positive" },
+  { name: "text_1", type: "STRING", connected: true, inner: "text", node: "Negative" },
+  { name: "spare", label: "Old", type: "INT", connected: false },
+];
+assert.deepEqual(computeSubgraphSlotLabels(sgSlots, {}), [undefined, undefined, undefined, undefined, undefined]); // keep
+assert.deepEqual(computeSubgraphSlotLabels(sgSlots, { subgraphSlotMode: "template", slotLabelCase: "title" }), [
+  "Clip", "Latent Image", "Text", "Text 1", "Spare",
+]);
+assert.deepEqual(computeSubgraphSlotLabels(sgSlots, { subgraphSlotMode: "template", subgraphSlotTemplate: "{node}: {inner}[ ({source})]" }), [
+  "Positive: clip (Load LoRA)", "KSampler: latent_image", "Positive: text", "Negative: text", ":",
+]);
+// duplicates are numbered, unconnected ones can be skipped
+assert.deepEqual(computeSubgraphSlotLabels(sgSlots, { subgraphSlotMode: "template", subgraphSlotTemplate: "{inner}", slotOnlyConnected: true }), [
+  undefined, undefined, "text 1", "text 2", undefined,
+]);
+assert.deepEqual(computeSubgraphSlotLabels(sgSlots, { subgraphSlotMode: "type" }), ["CLIP", "LATENT", "STRING 1", "STRING 2", "INT"]);
+assert.deepEqual(computeSubgraphSlotLabels(sgSlots, { subgraphSlotMode: "reset" }), [undefined, undefined, undefined, undefined, null]);
+assert.deepEqual(computeSubgraphSlotLabels(sgSlots, { subgraphSlotMode: "type", slotApplyTo: "outputs" }, { side: "inputs" }), [undefined, undefined, undefined, undefined, undefined]);
+assert.deepEqual(computeSubgraphSlotLabels(sgSlots, { subgraphSlotMode: "template", slotLabelRules: "STRING :: ^text.*$ => Prompt; _image => " }).slice(1, 4), ["latent", "Prompt 1", "Prompt 2"]);
+
 console.log("All rename checks passed");

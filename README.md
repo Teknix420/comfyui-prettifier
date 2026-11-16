@@ -81,6 +81,10 @@ set several options at once. **Apply** saves the options as your defaults; **Can
   nodes. Click a finding to jump to the node.
 - **Automatic runs.** Optionally prettify when a workflow is opened and/or saved.
 - **Subgraphs.** Prettifying a workflow also tidies the inside of every subgraph.
+  A subgraph's own inputs and outputs can be renamed from a template (the panels
+  inside and the connectors on the subgraph node change together) and reordered
+  so fewer links cross, either to match the layout inside the subgraph or the
+  nodes around the subgraph node.
 - Notes are gathered into a row, unconnected nodes are packed neatly, pinned nodes
   stay put, plus snap to grid, zoom to fit and an animated transition.
 
@@ -93,10 +97,15 @@ shrink to fit content, and fit groups to their nodes.
 | --- | --- |
 | Node titles | `{title}` current title, `{default}` default name, `{type}`, `{id}`, `{n}` number among nodes of the same type, `{stage}`, `{category}`, `{group}`, `{widget:NAME}` a widget value |
 | Connectors | `{name}`, `{label}` current label, `{type}` data type, `{node}` this node's title, `{source}` title of the node feeding an input, `{sourceSlot}` |
+| Subgraph connectors | `{name}` original name, `{label}`, `{type}`, `{inner}` name of the connector it is wired to inside, `{node}` title of that inside node, `{source}` title of the node feeding it on the parent canvas, `{subgraph}` |
 
 A `[bracketed part]` is dropped when a token inside it is empty. Find/replace rules
 look like `find => replace; find2 => replace2` (regular expressions), and can be
 limited to node or data types: `CLIPTextEncode :: ^.*$ => Prompt`.
+
+Subgraph connectors use the connector capitalization and find/replace rules, and
+connectors that would end up with the same label are numbered. Inside a subgraph,
+`{source}` on an input fed by the input panel is that subgraph input's name.
 
 ## Options
 
@@ -108,8 +117,8 @@ limited to node or data types: `CLIPTextEncode :: ^.*$ => Prompt`.
 | Groups | Group by (auto, existing, stage, category, section, none), minimum group size, category depth, padding, title size, color mode, single color |
 | Placement | Unconnected nodes, notes, separate sections, never move pinned nodes |
 | Links | Reroute dots (auto, remove, keep), route around groups, clearance, minimum link length |
-| Nodes | Collapse mode and pattern, muted/bypassed style, subgraphs |
-| Renaming | Rename on prettify, title mode/template/criteria/type filter/capitalization/numbering/rules, connector mode/template/sides/only connected/widget inputs/capitalization/rules |
+| Nodes | Collapse mode and pattern, muted/bypassed style, subgraphs, subgraph connector order |
+| Renaming | Rename on prettify, title mode/template/criteria/type filter/capitalization/numbering/rules, connector mode/template/sides/only connected/widget inputs/capitalization/rules, subgraph connector mode/template |
 | Notes | Summary note on/off, type, title, include prompts |
 | Appearance | Palette, custom palette JSON, node colors, link style, animation, zoom to fit |
 | Behavior | Scope, prettify on open/save, remember and use per-workflow options, summary message |
@@ -136,6 +145,7 @@ web/core.js        prettify / rename / undo actions, pass ordering
 web/rename.js      pure renaming engine (templates, rules)
 web/lint.js        pure lint checks
 web/extras.js      reroutes, collapse rules, summary note, per-workflow options, subgraphs
+web/subgraphs.js   subgraph inputs/outputs: renaming, reordering, undo
 web/themes.js      palettes, saved themes, export/import
 web/dialog.js      options dialog with live preview
 web/lintdialog.js  lint report panel
@@ -152,6 +162,7 @@ node tests/test_layout.mjs --svg    # also writes before/after SVGs to tests/out
 node tests/test_rename.mjs
 node tests/test_lint.mjs
 node tests/test_reroutes.mjs
+node tests/test_subgraphs.mjs
 ```
 
 ## Known limitations
@@ -164,3 +175,6 @@ node tests/test_reroutes.mjs
 - Nested groups: nodes are laid out by their innermost group; outer groups are
   refit around their contents afterwards and may overlap neighbours.
 - Inside a subgraph, the open subgraph is what gets prettified.
+- Subgraph connector order follows one side at a time: matching the inside can
+  add crossings outside and the other way round. With several copies of the same
+  subgraph, "outside" follows the first copy that has anything connected.

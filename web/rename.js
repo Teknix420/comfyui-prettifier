@@ -6,7 +6,8 @@
 // Input nodes:
 //   [{ id, title, defaultTitle, type, category, stage, group, x, y,
 //      widgets: { name: value },
-//      inputs:  [{ name, type, label, connected, isWidget, sourceId, sourceSlot }],
+//      inputs:  [{ name, type, label, connected, isWidget, sourceId, sourceSlot,
+//                 sourceTitle?, sourceSlotName? }],
 //      outputs: [{ name, type, label }] }]
 //
 // Result:
@@ -32,6 +33,9 @@ export const RENAME_DEFAULTS = {
   slotIncludeWidgets: false,
   slotLabelCase: "none", // none | title | upper | lower
   slotLabelRules: "",
+
+  subgraphSlotMode: "keep", // keep | reset | type | template
+  subgraphSlotTemplate: "{name}",
 };
 
 // --- helpers ------------------------------------------------------------------
@@ -212,8 +216,9 @@ export function computeRenames(nodes, userOpts = {}) {
           label: slot.label || slot.name,
           type: slot.type && slot.type !== "*" ? slot.type : "",
           node: finalTitle.get(n.id),
-          source: src ? finalTitle.get(src.id) : "",
-          sourceSlot: src ? src.outputs?.[slot.sourceSlot]?.name ?? "" : "",
+          // sourceTitle / sourceSlotName: the feeder is not a node (a subgraph's input panel).
+          source: src ? finalTitle.get(src.id) : slot.sourceTitle ?? "",
+          sourceSlot: src ? src.outputs?.[slot.sourceSlot]?.name ?? "" : slot.sourceSlotName ?? "",
         });
       }
       s = applyRules(s ?? "", rules, String(slot.type ?? ""));
@@ -241,4 +246,64 @@ export function computeRenames(nodes, userOpts = {}) {
     }
   }
   return result;
+}
+
+/**
+ * Labels for a subgraph's own inputs or outputs (the connectors on its input /
+ * output panel, mirrored on the subgraph node outside).
+ *
+ * slots: [{ name, label, type, connected, inner, node, source }]
+ *   inner  name of the connector inside the subgraph this one is wired to
+ *   node   title of that inside node
+ *   source title of the node feeding this input on the parent canvas (inputs only)
+ * Returns one entry per slot: a string, null (remove the label) or undefined (leave).
+ * Uses the connector capitalization and find/replace rules; duplicates get numbered.
+ */
+export function computeSubgraphSlotLabels(slots, userOpts = {}, extra = {}) {
+  const o = { ...RENAME_DEFAULTS, ...userOpts };
+  if (o.subgraphSlotMode === "keep") return slots.map(() => undefined);
+  if (extra.side && o.slotApplyTo !== "both" && o.slotApplyTo !== extra.side) return slots.map(() => undefined);
+  const rules = parseRules(o.slotLabelRules);
+  const next = slots.map((slot) => {
+    if (o.slotOnlyConnected && !slot.connected) return undefined;
+    if (o.subgraphSlotMode === "reset") return null;
+    let s;
+    if (o.subgraphSlotMode === "type") s = slot.type && slot.type !== "*" ? String(slot.type) : slot.name;
+    else
+      s = fillTemplate(o.subgraphSlotTemplate, {
+        name: slot.name,
+        label: slot.label || slot.name,
+        type: slot.type && slot.type !== "*" ? slot.type : "",
+        inner: slot.inner,
+        node: slot.node,
+        source: slot.source,
+        subgraph: extra.subgraph,
+      });
+    s = applyRules(s ?? "", rules, String(slot.type ?? ""));
+    s = applyCase(s, o.slotLabelCase);
+    return s || null;
+  });
+  // Two connectors with the same label are hard to tell apart: number them.
+  if (o.subgraphSlotMode !== "reset") {
+    const groups = new Map();
+    next.forEach((s, i) => {
+      const shown = s === undefined ? slots[i].label || slots[i].name : s ?? slots[i].name;
+      if (!groups.has(shown)) groups.set(shown, []);
+      groups.get(shown).push(i);
+    });
+    for (const [shown, list] of groups) {
+      const mine = list.filter((i) => next[i] !== undefined);
+      if (list.length < 2 || !mine.length) continue;
+      let n = 0;
+      for (const i of list) {
+        n++;
+        if (next[i] !== undefined) next[i] = `${shown} ${n}`;
+      }
+    }
+  }
+  return next.map((s, i) => {
+    if (s === undefined) return undefined;
+    const want = s === slots[i].name ? null : s;
+    return want === (slots[i].label || null) ? undefined : want;
+  });
 }
