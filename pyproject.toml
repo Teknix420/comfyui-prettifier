@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-prettifier"
-description = "Makes ComfyUI workflows readable and good looking: auto-layout by graph flow, compact packing, link straightening, reroute cleanup, variables for long links, resizing, grouping with custom rules, renaming, themes and a lint report, with lots of options."
+description = "Alt+P prettifies the workflow, Alt+Shift+P opens the options. Makes ComfyUI workflows readable and good looking: auto-layout by graph flow, link straightening and rerouting, grouping, node and link colors, color palettes, renaming, themes and a lint report, with lots of options."
 version = "0.3.1"
 license = { file = "LICENSE" }
 dependencies = []
@@ -11,4 +11,5 @@ Repository = "https://github.com/Teknix420/comfyui-prettifier"
 [tool.comfy]
 PublisherId = "teknix420"
 DisplayName = "Prettifier"
-Icon = ""
+Icon = "https://github.com/Teknix420/comfyui-prettifier/raw/main/docs/icon.png"
+Banner = "https://github.com/Teknix420/comfyui-prettifier/raw/main/docs/banner.png"
