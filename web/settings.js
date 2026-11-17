@@ -108,6 +108,16 @@ export const OPTIONS = [
     opt("detour", "Take the shortest way around"),
     opt("level", "Stay level, bend only where needed"),
   ], "Stay level: a rerouted link runs horizontally as far as it can and only gets a dot where it has to change height to pass something, or just before its input."),
+  combo("rerouteTurn", "Links", "Link direction preference", [
+    opt("auto", "No preference (ComfyUI turns half-way)"),
+    opt("horizontal", "Horizontal first: run level, turn near the input"),
+    opt("vertical", "Vertical first: turn near the output, then run level"),
+  ], "For links whose two ends are at different heights and that are longer than 'Only reroute links longer than'. Two dots make the link turn once, at the chosen end, instead of wherever the middle happens to be. Most visible with the Straight link style."),
+  combo("rerouteLane", "Links", "Send rerouted links", [
+    opt("auto", "Around whatever is in the way"),
+    opt("above", "Above the whole workflow"),
+    opt("below", "Below the whole workflow"),
+  ], "Above or below: every link that has to be rerouted runs in its own lane outside all nodes and groups, instead of weaving between them. Links from the same output share a lane."),
   combo("rerouteBend", "Links", "Where rerouted links bend", [
     opt("center", "Centered between columns"),
     opt("near", "Next to the node they go around"),
@@ -205,6 +215,8 @@ export const EXTRA_DEFAULTS = {
   rerouteMode: "auto",
   rerouteStyle: "detour",
   rerouteBend: "center",
+  rerouteTurn: "auto",
+  rerouteLane: "auto",
   rerouteAvoidGroups: true,
   rerouteClearance: 16,
   rerouteMinLength: 300,

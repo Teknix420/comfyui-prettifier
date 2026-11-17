@@ -46,6 +46,12 @@ export function toast(app, severity, summary, detail) {
   console.log(`[Prettifier] ${summary}${detail ? ": " + detail : ""}`);
 }
 
+/** Are links drawn with right angles ("Straight"), now or after this run? */
+function linksAreOrthogonal(app, o) {
+  const mode = LINK_MODES[o.linkStyle] ?? app.canvas?.links_render_mode;
+  return mode === LINK_MODES.straight;
+}
+
 function applyLinkStyle(app, style) {
   const mode = LINK_MODES[style];
   if (mode === undefined) return;
@@ -129,7 +135,7 @@ function runPasses(app, graph, nodes, o, { isSelection, noHistory, isChild }) {
     animate: o.animate && !isChild,
     fitView: o.fitView && !isChild,
     onPlaced: () => {
-      stats.reroutes = cleanReroutes(graph, nodes, { ...o, clearAll: !isSelection });
+      stats.reroutes = cleanReroutes(graph, nodes, { ...o, clearAll: !isSelection, linkOrthogonal: linksAreOrthogonal(app, o) });
     },
   });
   // Stage coloring runs inside the layout pass; dimming of inactive nodes wins over it.
@@ -258,7 +264,7 @@ export function reroutesOnly(app, mode) {
   const nodes = graphNodes(graph);
   if (!nodes.length) return null;
   lastSnapshot = snapshotAll(app, graph);
-  const r = cleanReroutes(graph, nodes, { ...o, clearAll: true, rerouteMode: mode ?? (o.rerouteMode === "keep" ? "auto" : o.rerouteMode) });
+  const r = cleanReroutes(graph, nodes, { ...o, clearAll: true, linkOrthogonal: linksAreOrthogonal(app, o), rerouteMode: mode ?? (o.rerouteMode === "keep" ? "auto" : o.rerouteMode) });
   notifyChanged(app, graph);
   app.canvas?.setDirty?.(true, true);
   if (o.showToast) toast(app, "success", "Reroutes", `${r.added} dots added, ${r.removed} removed.`);

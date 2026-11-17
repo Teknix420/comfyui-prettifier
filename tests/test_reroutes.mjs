@@ -190,6 +190,71 @@ const levelLength = (path) => {
   check("center: bends in one gap fan out", new Set(xs).size > 1 && xs.every((x) => (x > 200 && x < 600) || (x > 800 && x < 1400)), xs.join());
 }
 
+// --- tight columns: stay level still works when nodes are close together ---------
+{
+  const A = node(1, 0, 0), C = node(3, 230, -20), B = node(2, 900, 300);
+  const g = makeGraph([A, B, C], [[1, 2]], []);
+  const r = cleanReroutes(g, [A, B, C], { ...base, hGap: 80, rerouteStyle: "level" });
+  const path = pathOf(g, 1, A, B);
+  check("level: finds a path with a 30px gap between columns", r.added >= 1 && path.slice(-2)[0][1] === path.slice(-1)[0][1], JSON.stringify(path));
+  check("level: tight path avoids the node", !crossesRect(path, [230, -50, 200, 130]));
+}
+
+// --- direction preference and right-angle links ----------------------------------
+{
+  // Nothing in the way; ends at different heights.
+  const A = node(1, 0, 0), B = node(2, 1400, 400);
+  for (const [turn, x] of [["horizontal", 1360], ["vertical", 240]]) {
+    const g = makeGraph([A, B], [[1, 2]], []);
+    const r = cleanReroutes(g, [A, B], { ...base, rerouteTurn: turn });
+    const p = pathOf(g, 1, A, B);
+    check(`${turn} first: one turn, at the right end`, r.added === 2 && p[1][0] === x && p[2][0] === x && p[1][1] === p[0][1] && p[2][1] === p[3][1], JSON.stringify(p));
+  }
+  const gc = makeGraph([A, B], [[1, 2]], []);
+  cleanReroutes(gc, [A, B], { ...base, rerouteBend: "center", rerouteTurn: "horizontal" });
+  check("horizontal first + centered: the turn is mid-gap", pathOf(gc, 1, A, B)[1][0] === 800, JSON.stringify(pathOf(gc, 1, A, B)));
+  const g0 = makeGraph([A, B], [[1, 2]], []);
+  check("no preference: a clear link gets no dots", cleanReroutes(g0, [A, B], { ...base }).added === 0);
+  const gs = makeGraph([A, node(2, 250, 400)], [[1, 2]], []);
+  check("preference leaves short links alone", cleanReroutes(gs, gs._nodes, { ...base, rerouteTurn: "horizontal" }).added === 0);
+
+  // The preferred turn is blocked, the other end is free.
+  const C = node(3, 1000, -20);
+  const g2 = makeGraph([A, B, C], [[1, 2]], []);
+  cleanReroutes(g2, [A, B, C], { ...base, rerouteTurn: "horizontal" });
+  const p2 = pathOf(g2, 1, A, B);
+  check("horizontal first falls back to vertical first when blocked", p2[1][0] === 240 && !crossesRect(p2, [1000, -50, 200, 130]), JSON.stringify(p2));
+
+  // Right-angle links: the half-way step of a clear diagonal can still hit a node.
+  const D = node(4, 700, 150, 200, 100);
+  const A3 = node(1, 0, 0), B3 = node(2, 1400, 500);
+  const g3 = makeGraph([A3, B3, D], [[1, 2]], []);
+  const diag = cleanReroutes(g3, [A3, B3, D], { ...base });
+  const g4 = makeGraph([A3, B3, D], [[1, 2]], []);
+  const orth = cleanReroutes(g4, [A3, B3, D], { ...base, linkOrthogonal: true });
+  const p4 = pathOf(g4, 1, A3, B3);
+  check("right-angle links: the drawn path is what gets tested", orth.added > 0, JSON.stringify([diag, orth]));
+  check("right-angle detour leaves and enters level", p4[1][1] === p4[0][1] && p4[p4.length - 2][1] === p4[p4.length - 1][1], JSON.stringify(p4));
+}
+
+// --- forced lane above / below the whole workflow ---------------------------------
+{
+  const A = node(1, 0, 0), B = node(2, 1400, 0), C = node(3, 600, -20), E = node(5, 600, 400), F = node(6, 600, -500);
+  const rect = [560, 340, 300, 260];
+  for (const [where, test] of [["above", (y) => y < -530], ["below", (y) => y > 600]]) {
+    const g = makeGraph([A, B, C, E, F], [[1, 2]], [rect]);
+    const r = cleanReroutes(g, g._nodes, { ...base, rerouteLane: where });
+    const p = pathOf(g, 1, A, B);
+    check(`${where}: the lane is outside every node and group`, r.added === 2 && test(p[1][1]) && p[1][1] === p[2][1], JSON.stringify(p));
+    const g2 = makeGraph([A, B, C, E, F], [[1, 2]], [rect]);
+    cleanReroutes(g2, g2._nodes, { ...base, rerouteLane: where, linkOrthogonal: true });
+    const p2 = pathOf(g2, 1, A, B);
+    check(`${where} + right-angle links: four dots, level at both ends`, p2.length === 6 && p2[1][1] === p2[0][1] && p2[4][1] === p2[5][1] && p2[1][0] === p2[2][0], JSON.stringify(p2));
+  }
+  const g3 = makeGraph([A, node(2, 1400, 0)], [[1, 2]], []);
+  check("forced lane leaves clear links alone", cleanReroutes(g3, g3._nodes, { ...base, rerouteLane: "above" }).added === 0);
+}
+
 if (failed) {
   console.error(`${failed} check(s) failed`);
   process.exit(1);

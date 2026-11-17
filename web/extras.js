@@ -96,10 +96,10 @@ function segmentHitsBox(ax, ay, bx, by, r, m) {
  * where something is in the way, or just before the input. Returns the dot positions
  * in order, or null when no such path was found.
  */
-function levelRoute(sx, sy, tx, ty, others, gap, margin, lane, mid) {
-  const hits = (ax, ay, bx, by, skip) => others.filter((b) => !skip?.has(b) && segmentHitsBox(ax, ay, bx, by, b, 2));
+function levelRoute(sx, sy, tx, ty, others, gap, margin, lane, mid, seg = (ax, ay, bx, by, b) => segmentHitsBox(ax, ay, bx, by, b, 2)) {
+  const hits = (ax, ay, bx, by, skip) => others.filter((b) => !skip?.has(b) && seg(ax, ay, bx, by, b));
   const endX = tx - gap;
-  if (endX - sx < 2 * gap) return null;
+  if (endX - sx < 16) return null;
   const pts = [];
   let cx = sx, y = sy;
   for (let guard = 0; guard < 6; guard++) {
@@ -149,7 +149,13 @@ function levelRoute(sx, sy, tx, ty, others, gap, margin, lane, mid) {
           ax = bx = c;
         }
       }
-      if (bx < cx + 8 || bx >= endX) return null;
+      if (!gutter && bx < cx + 8 && left - cx >= 12) {
+        // Columns closer together than the usual spacing: turn half-way to the obstacle.
+        bx = (cx + left) / 2;
+        ax = cx;
+      }
+      if (bx < cx + 8 && !(bx > cx + 4 && ax <= cx)) return null;
+      if (bx >= endX) return null;
       direct = ax < cx + 8; // no room to stay level first: head straight for the lane
       const more = [...hits(direct ? cx : ax, y, bx, ly, set), ...hits(bx, ly, Math.min(endX, right + gap), ly, set)];
       if (!more.length) {
@@ -176,6 +182,9 @@ function levelRoute(sx, sy, tx, ty, others, gap, margin, lane, mid) {
  * mode: keep | remove | auto.  Returns { removed, added }.
  * o.rerouteStyle "level" keeps links level and only bends them where they must.
  * o.rerouteBend "center" (default) puts bends mid-way between columns, "near" next to the obstacle.
+ * o.rerouteTurn "horizontal" | "vertical": long links with ends at different heights turn once,
+ *   near the input or near the output. o.linkOrthogonal: links are drawn with right angles.
+ * o.rerouteLane "above" | "below": rerouted links run in lanes outside the whole workflow.
  * o.clearAll (whole workflow) removes every dot first, not only those of these links.
  */
 export function cleanReroutes(graph, nodes, o) {
@@ -228,9 +237,54 @@ export function cleanReroutes(graph, nodes, o) {
     return uses;
   };
 
+  // With right-angle ("straight") links ComfyUI draws a link between two points at
+  // different heights as level, a vertical step half-way, level. Test that path.
+  const ortho = !!o.linkOrthogonal;
+  const seg = (ax, ay, bx, by, b) => {
+    if (!ortho || ax === bx || ay === by) return segmentHitsBox(ax, ay, bx, by, b, 2);
+    const mx = (ax + bx) / 2;
+    return segmentHitsBox(ax, ay, mx, ay, b, 2) || segmentHitsBox(mx, ay, mx, by, b, 2) || segmentHitsBox(mx, by, bx, by, b, 2);
+  };
+  const clear = (list, ...pts) => {
+    for (let i = 0; i + 1 < pts.length; i++) if (list.some((b) => seg(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], b))) return false;
+    return true;
+  };
+  const addDots = (link, pts) => {
+    // createReroute inserts before the given segment, so go from the far end.
+    let before = link;
+    for (let i = pts.length - 1; i >= 0; i--) before = graph.createReroute(pts[i], before);
+    res.added += pts.length;
+  };
+  const turnPref = o.rerouteTurn === "horizontal" || o.rerouteTurn === "vertical" ? o.rerouteTurn : null;
+
+  // "above" / "below": rerouted links use lanes outside the whole workflow. Links
+  // from the same output share a lane.
+  let outer = null;
+  if (o.rerouteLane === "above" || o.rerouteLane === "below") {
+    const all = [...boxes, ...graphGroups(graph).map(groupRect).filter((r) => r.w > 0 && r.h > 0)];
+    const top = Math.min(...all.map((b) => b.y)), bottom = Math.max(...all.map((b) => b.y + b.h));
+    const up = o.rerouteLane === "above";
+    const laneOf = new Map();
+    outer = {
+      y: (n) => (up ? top - margin - 10 - n * 12 : bottom + margin + 10 + n * 12),
+      lane(link) {
+        const key = link.origin_id + ":" + link.origin_slot;
+        if (!laneOf.has(key)) laneOf.set(key, laneOf.size);
+        return laneOf.get(key);
+      },
+    };
+  }
+
   // "center": bends sit in the middle of the gap between two columns instead of
   // right next to the node they go around. Several bends in one gap fan out.
   const used = new Map();
+  const spread = (c, [lo, hi]) => {
+    const key = Math.round(c / 4);
+    const n = used.get(key) || 0;
+    used.set(key, n + 1);
+    const off = n ? Math.ceil(n / 2) * 10 * (n % 2 ? 1 : -1) : 0;
+    return Math.min(Math.max(hi - 8, c), Math.max(Math.min(lo + 8, c), c + off));
+  };
   const mid =
     o.rerouteBend === "near"
       ? null
@@ -245,13 +299,7 @@ export function cleanReroutes(graph, nodes, o) {
             for (const b of boxes) if (b.x >= x + 1 && b.x < hi) hi = b.x;
             return [x, hi];
           },
-          spread(c, [lo, hi]) {
-            const key = Math.round(c / 4);
-            const n = used.get(key) || 0;
-            used.set(key, n + 1);
-            const off = n ? Math.ceil(n / 2) * 10 * (n % 2 ? 1 : -1) : 0;
-            return Math.min(Math.max(hi - 8, c), Math.max(Math.min(lo + 8, c), c + off));
-          },
+          spread,
         };
 
   // Links that share an output and take the same detour share dots, so sort for determinism.
@@ -263,19 +311,58 @@ export function cleanReroutes(graph, nodes, o) {
     const foreign = groupBoxes.filter((g) => !g.members.has(src) && !g.members.has(dst));
     const others = [...boxes.filter((b) => b.n !== src && b.n !== dst), ...foreign];
     const backward = tx < sx + 20;
-    let hit = others.filter((b) => segmentHitsBox(sx, sy, tx, ty, b, 2));
-    if (!hit.length && !backward) continue;
-    if (!backward && tx - sx < (o.rerouteMinLength ?? 300)) continue;
-
+    let hit = others.filter((b) => seg(sx, sy, tx, ty, b));
+    const long = tx - sx >= (o.rerouteMinLength ?? 300);
     const gap = Math.min(40, Math.max(16, (o.hGap ?? 80) / 2));
+
+    // Direction preference: one turn, either just before the input (horizontal
+    // first) or right after the output (vertical first), when that path is clear.
+    if (turnPref && !backward && long && Math.abs(sy - ty) >= 1) {
+      const turnAt = (kind) => {
+        const g = kind === "horizontal" ? (mid ? mid.leftOf(tx, sx) : [tx - gap - 60, tx]) : mid ? mid.rightOf(sx, tx) : [sx, sx + gap + 60];
+        const c = mid ? (g[0] + g[1]) / 2 : kind === "horizontal" ? tx - gap : sx + gap;
+        if (!(c > sx + 8 && c < tx - 8) || !clear(others, [sx, sy], [c, sy], [c, ty], [tx, ty])) return null;
+        const x = spread(c, g);
+        return [[x, sy], [x, ty]];
+      };
+      const pts = turnAt(turnPref) || turnAt(turnPref === "horizontal" ? "vertical" : "horizontal");
+      if (pts) {
+        try {
+          addDots(link, pts);
+        } catch (err) {
+          console.warn("[Prettifier] could not add reroute", err);
+          break;
+        }
+        continue;
+      }
+    }
+    if (!hit.length && !backward) continue;
+    if (!backward && !long) continue;
+
+    // Forced lane: a link that needs rerouting runs above or below everything.
+    if (outer && !backward) {
+      const a = mid ? mid.rightOf(sx, tx) : [sx, sx + gap + 60];
+      const b = mid ? mid.leftOf(tx, sx) : [tx - gap - 60, tx];
+      const ca = mid ? (a[0] + a[1]) / 2 : sx + gap, cb = mid ? (b[0] + b[1]) / 2 : tx - gap;
+      const y0 = outer.y(0);
+      if (cb - ca >= 20 && clear(others, [sx, sy], [ca, sy], [ca, y0]) && clear(others, [cb, y0], [cb, ty], [tx, ty])) {
+        const y = outer.y(outer.lane(link));
+        const ax = spread(ca, a), bx = spread(cb, b);
+        try {
+          addDots(link, ortho || turnPref ? [[ax, sy], [ax, y], [bx, y], [bx, ty]] : [[ax, y], [bx, y]]);
+        } catch (err) {
+          console.warn("[Prettifier] could not add reroute", err);
+          break;
+        }
+        continue;
+      }
+    }
+
     if (o.rerouteStyle === "level" && !backward) {
-      const pts = levelRoute(sx, sy, tx, ty, others, gap, margin, lane, mid);
+      const pts = levelRoute(sx, sy, tx, ty, others, gap, margin, lane, mid, seg);
       if (pts?.length) {
         try {
-          // createReroute inserts before the given segment, so go from the far end.
-          let before = link;
-          for (let i = pts.length - 1; i >= 0; i--) before = graph.createReroute(pts[i], before);
-          res.added += pts.length;
+          addDots(link, pts);
         } catch (err) {
           console.warn("[Prettifier] could not add reroute", err);
           break;
@@ -320,7 +407,7 @@ export function cleanReroutes(graph, nodes, o) {
       const blockers = free.filter(
         (b) =>
           segmentHitsBox(Math.min(x0, x1), y, Math.max(x0, x1), y, b, 2) ||
-          (!backward && (segmentHitsBox(sx, sy, ax, y, b, 2) || segmentHitsBox(bx, y, tx, ty, b, 2))),
+          (!backward && (seg(sx, sy, ax, y, b) || seg(bx, y, tx, ty, b))),
       );
       if (!blockers.length) break;
       blockers.forEach((b) => set.add(b));
@@ -332,11 +419,15 @@ export function cleanReroutes(graph, nodes, o) {
       bx = mid.spread(bx, gr);
     }
     if (!backward && bx - ax < 20) continue;
+    const pts = [[ax, y], [bx, y]];
+    // With right-angle links, or a direction preference, every turn gets its own
+    // dot so the link leaves its output and enters its input level.
+    if (!backward && (ortho || turnPref)) {
+      if (Math.abs(sy - y) >= 1 && clear(others, [sx, sy], [ax, sy], [ax, y])) pts.unshift([ax, sy]);
+      if (Math.abs(ty - y) >= 1 && clear(others, [bx, y], [bx, ty], [tx, ty])) pts.push([bx, ty]);
+    }
     try {
-      // createReroute inserts before the given segment, so create the far dot first.
-      const second = graph.createReroute([bx, y], link);
-      graph.createReroute([ax, y], second);
-      res.added += 2;
+      addDots(link, pts);
     } catch (err) {
       console.warn("[Prettifier] could not add reroute", err);
       break;
