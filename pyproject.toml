@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-prettifier"
 description = "Makes ComfyUI workflows readable and good looking: auto-layout by graph flow, compact packing, link straightening, reroute cleanup, variables for long links, resizing, grouping with custom rules, renaming, themes and a lint report, with lots of options."
-version = "0.3.0"
+version = "0.3.1"
 license = { file = "LICENSE" }
 dependencies = []
 
