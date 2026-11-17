@@ -96,7 +96,7 @@ function segmentHitsBox(ax, ay, bx, by, r, m) {
  * where something is in the way, or just before the input. Returns the dot positions
  * in order, or null when no such path was found.
  */
-function levelRoute(sx, sy, tx, ty, others, gap, margin, lane) {
+function levelRoute(sx, sy, tx, ty, others, gap, margin, lane, mid) {
   const hits = (ax, ay, bx, by, skip) => others.filter((b) => !skip?.has(b) && segmentHitsBox(ax, ay, bx, by, b, 2));
   const endX = tx - gap;
   if (endX - sx < 2 * gap) return null;
@@ -105,16 +105,25 @@ function levelRoute(sx, sy, tx, ty, others, gap, margin, lane) {
   for (let guard = 0; guard < 6; guard++) {
     const blocked = hits(cx, y, endX, y);
     if (!blocked.length) {
-      if (Math.abs(y - ty) >= 1 && endX > cx + 8) {
-        if (hits(endX, y, tx, ty).length) return null;
-        pts.push([endX, y]);
-      } else if (hits(cx, y, tx, ty).length) return null;
+      if (Math.abs(y - ty) < 1 || endX <= cx + 8) return hits(cx, y, tx, ty).length ? null : pts;
+      if (mid) {
+        // Change height in the middle of the gap in front of the input, then go in level.
+        const g = mid.leftOf(tx, cx);
+        const c = (g[0] + g[1]) / 2;
+        if (c > cx + 8 && !hits(c, y, c, ty).length && !hits(c, ty, tx, ty).length) {
+          const x = mid.spread(c, g);
+          pts.push([x, y], [x, ty]);
+          return pts;
+        }
+      }
+      if (hits(endX, y, tx, ty).length) return null;
+      pts.push([endX, y]);
       return pts;
     }
     // Go around the first thing in the way: at the input's height when that is
     // clear of it (the rest of the link is then level), otherwise just above or below.
     const set = new Set([blocked.reduce((a, b) => (b.x < a.x ? b : a))]);
-    let ly, dir, ax, bx, direct, ok = false;
+    let ly, dir, ax, bx, direct, gutter, ok = false;
     for (let iter = 0; iter < 8; iter++) {
       const arr = [...set];
       const top = Math.min(...arr.map((b) => b.y)), bottom = Math.max(...arr.map((b) => b.y + b.h));
@@ -130,6 +139,16 @@ function levelRoute(sx, sy, tx, ty, others, gap, margin, lane) {
       }
       bx = left - gap;
       ax = bx - gap;
+      gutter = null;
+      if (mid) {
+        // Both dots in the middle of the gap between the columns: a vertical step.
+        const g = mid.leftOf(left, cx);
+        const c = (g[0] + g[1]) / 2;
+        if (c > cx + 8 && c < left - 4) {
+          gutter = g;
+          ax = bx = c;
+        }
+      }
       if (bx < cx + 8 || bx >= endX) return null;
       direct = ax < cx + 8; // no room to stay level first: head straight for the lane
       const more = [...hits(direct ? cx : ax, y, bx, ly, set), ...hits(bx, ly, Math.min(endX, right + gap), ly, set)];
@@ -141,6 +160,7 @@ function levelRoute(sx, sy, tx, ty, others, gap, margin, lane) {
     }
     if (!ok) return null;
     if (dir) ly += lane(ly) * 10 * dir;
+    if (gutter) ax = bx = mid.spread(bx, gutter);
     if (!direct) pts.push([ax, y]);
     pts.push([bx, ly]);
     cx = bx;
@@ -155,6 +175,7 @@ function levelRoute(sx, sy, tx, ty, others, gap, margin, lane) {
  * contain neither end of the link.
  * mode: keep | remove | auto.  Returns { removed, added }.
  * o.rerouteStyle "level" keeps links level and only bends them where they must.
+ * o.rerouteBend "center" (default) puts bends mid-way between columns, "near" next to the obstacle.
  * o.clearAll (whole workflow) removes every dot first, not only those of these links.
  */
 export function cleanReroutes(graph, nodes, o) {
@@ -207,6 +228,32 @@ export function cleanReroutes(graph, nodes, o) {
     return uses;
   };
 
+  // "center": bends sit in the middle of the gap between two columns instead of
+  // right next to the node they go around. Several bends in one gap fan out.
+  const used = new Map();
+  const mid =
+    o.rerouteBend === "near"
+      ? null
+      : {
+          leftOf(x, min) {
+            let lo = min;
+            for (const b of boxes) if (b.x + b.w <= x - 1 && b.x + b.w > lo) lo = b.x + b.w;
+            return [lo, x];
+          },
+          rightOf(x, max) {
+            let hi = max;
+            for (const b of boxes) if (b.x >= x + 1 && b.x < hi) hi = b.x;
+            return [x, hi];
+          },
+          spread(c, [lo, hi]) {
+            const key = Math.round(c / 4);
+            const n = used.get(key) || 0;
+            used.set(key, n + 1);
+            const off = n ? Math.ceil(n / 2) * 10 * (n % 2 ? 1 : -1) : 0;
+            return Math.min(Math.max(hi - 8, c), Math.max(Math.min(lo + 8, c), c + off));
+          },
+        };
+
   // Links that share an output and take the same detour share dots, so sort for determinism.
   links.sort((a, b) => a.origin_id - b.origin_id || a.origin_slot - b.origin_slot || a.target_id - b.target_id);
   for (const link of links) {
@@ -222,7 +269,7 @@ export function cleanReroutes(graph, nodes, o) {
 
     const gap = Math.min(40, Math.max(16, (o.hGap ?? 80) / 2));
     if (o.rerouteStyle === "level" && !backward) {
-      const pts = levelRoute(sx, sy, tx, ty, others, gap, margin, lane);
+      const pts = levelRoute(sx, sy, tx, ty, others, gap, margin, lane, mid);
       if (pts?.length) {
         try {
           // createReroute inserts before the given segment, so go from the far end.
@@ -238,7 +285,7 @@ export function cleanReroutes(graph, nodes, o) {
     }
 
     // Grow the set of obstacles until the detour lane itself is clear.
-    let top, bottom, left, right, y, ax, bx;
+    let top, bottom, left, right, y, ax, bx, gl, gr;
     const span = backward ? boxes.filter((b) => b.x < sx + 40 && b.x + b.w > tx - 40) : hit;
     let set = new Set(span.length ? span : hit);
     if (backward) {
@@ -256,6 +303,17 @@ export function cleanReroutes(graph, nodes, o) {
       y = backward ? below : costA <= costB ? above : below;
       ax = backward ? sx + gap : Math.max(sx + 16, left - gap);
       bx = backward ? tx - gap : Math.min(tx - 16, right + gap);
+      gl = gr = null;
+      if (mid && !backward) {
+        const a = mid.leftOf(left, sx), b = mid.rightOf(right, tx);
+        const ca = (a[0] + a[1]) / 2, cb = (b[0] + b[1]) / 2;
+        if (ca > sx + 8 && cb < tx - 8 && cb - ca >= 20) {
+          gl = a;
+          gr = b;
+          ax = ca;
+          bx = cb;
+        }
+      }
       const x0 = backward ? tx - 30 : left - 30, x1 = backward ? sx + 30 : right + 30;
       const free = others.filter((b) => !set.has(b));
       // The lane must be clear, and so must the legs from the source and to the target.
@@ -269,6 +327,10 @@ export function cleanReroutes(graph, nodes, o) {
     }
     const shift = lane(y) * 10 * (y < (sy + ty) / 2 ? -1 : 1);
     y += shift;
+    if (gl) {
+      ax = mid.spread(ax, gl);
+      bx = mid.spread(bx, gr);
+    }
     if (!backward && bx - ax < 20) continue;
     try {
       // createReroute inserts before the given segment, so create the far dot first.

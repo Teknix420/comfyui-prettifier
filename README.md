@@ -64,7 +64,8 @@ set several options at once. **Apply** saves the options as your defaults; **Can
   kept out of groups they don't belong to (neither end inside), which you can turn
   off. Or just remove every dot, or leave them alone. With **Stay level**, a
   rerouted link runs horizontally as far as it can and only gets a dot where it
-  has to change height. Prettifying the whole workflow clears every old dot first
+  has to change height. Bends are centered in the gap between two columns (or, if
+  you prefer, placed right next to the node they go around). Prettifying the whole workflow clears every old dot first
   (a selection only clears the dots of its own links), and running it again gives
   the same result.
 - **Variables instead of long links.** Optionally swap long links, or links that
@@ -125,7 +126,7 @@ connectors that would end up with the same label are numbered. Inside a subgraph
 | Sizing | Node width mode, fixed/min/max width, node height mode, shrink nodes with images or text |
 | Groups | Arrangement (follow the flow, compact, most compact), target shape, group by (auto, existing, stage, category, section, node type, node color, only my rules, none), custom group rules, groups not to create, name template, name find/replace, number duplicate names, restyle existing groups, minimum group size, category depth, padding, title size, color mode, single color |
 | Placement | Unconnected nodes, notes, separate sections, align ungrouped nodes with the group box or with the nodes inside groups, match grouped node width, never move pinned nodes |
-| Links | Reroute dots (auto, remove, keep), rerouted links take the shortest way or stay level, route around groups, clearance, minimum link length, replace links with variables (long, blocked, both), length that counts as long, variable name template, collapse variable nodes |
+| Links | Reroute dots (auto, remove, keep), rerouted links take the shortest way or stay level, bends centered between columns or next to the node, route around groups, clearance, minimum link length, replace links with variables (long, blocked, both), length that counts as long, variable name template, collapse variable nodes |
 | Nodes | Collapse mode and pattern, muted/bypassed style, subgraphs, subgraph connector order |
 | Renaming | Rename on prettify, title mode/template/criteria/type filter/capitalization/numbering/rules, connector mode/template/sides/only connected/widget inputs/capitalization/rules, subgraph connector mode/template |
 | Notes | Summary note on/off, type, title, include prompts |

@@ -48,7 +48,7 @@ function crossesRect(path, [x, y, w, h]) {
   return false;
 }
 
-const base = { rerouteMode: "auto", rerouteClearance: 16, rerouteMinLength: 300, hGap: 80 };
+const base = { rerouteBend: "near", rerouteMode: "auto", rerouteClearance: 16, rerouteMinLength: 300, hGap: 80 };
 
 // A --> B with a group in between whose only node sits below the straight line.
 {
@@ -160,6 +160,34 @@ const levelLength = (path) => {
   g.links.get(1).path = [];
   const r2 = cleanReroutes(g, [A, B, C], { ...base });
   check("a selection leaves other dots alone", g.reroutes.has(902) && r2.removed === 2, JSON.stringify(r2));
+}
+
+// --- bends centered between columns ---------------------------------------------
+{
+  // Columns: A ends at 200, C spans 600..800, B starts at 1400.
+  const A = node(1, 0, 0), B = node(2, 1400, 300), C = node(3, 600, -20);
+  // rerouteMinLength 0 and a target low enough that the straight line clips C
+  const B2 = node(2, 1400, 60);
+  const g1 = makeGraph([A, B2, C], [[1, 2]], []);
+  const r1 = cleanReroutes(g1, [A, B2, C], { ...base, rerouteBend: "center" });
+  const p1 = pathOf(g1, 1, A, B2);
+  check("center: detour dots sit mid-gap", r1.added === 2 && p1[1][0] === 400 && p1[2][0] === 1100, JSON.stringify(p1));
+  check("center: detour avoids the node", !crossesRect(p1, [600, -50, 200, 130]));
+
+  const g2 = makeGraph([A, B2, C], [[1, 2]], []);
+  const r2 = cleanReroutes(g2, [A, B2, C], { ...base, rerouteBend: "center", rerouteStyle: "level" });
+  const p2 = pathOf(g2, 1, A, B2);
+  check("center + level: the step is vertical and mid-gap", r2.added >= 2 && p2[1][0] === 400 && p2[2][0] === 400, JSON.stringify(p2));
+  check("center + level: avoids the node", !crossesRect(p2, [600, -50, 200, 130]));
+  const last = p2[p2.length - 2], end = p2[p2.length - 1];
+  check("center + level: enters the input level", Math.abs(last[1] - end[1]) < 1, JSON.stringify(p2));
+
+  // Two links bending in the same gap do not sit on top of each other.
+  const A2 = node(4, 0, 200), B3 = node(5, 1400, 200), C2 = node(6, 600, 180);
+  const g3 = makeGraph([A, B2, C, A2, B3, C2], [[1, 2], [4, 5]], []);
+  cleanReroutes(g3, [A, B2, C, A2, B3, C2], { ...base, rerouteBend: "center", rerouteStyle: "level" });
+  const xs = [...g3.reroutes.values()].map((r) => r.pos[0]);
+  check("center: bends in one gap fan out", new Set(xs).size > 1 && xs.every((x) => (x > 200 && x < 600) || (x > 800 && x < 1400)), xs.join());
 }
 
 if (failed) {
