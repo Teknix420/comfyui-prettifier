@@ -208,6 +208,10 @@ node tests/test_subgraphs.mjs
 node tests/test_variables.mjs
 ```
 
+Before a release, `python3 .github/scripts/registry_scan.py` checks the files that
+get uploaded for code the Comfy Registry's scanner is known to flag. The publish
+workflow runs it first and stops if it finds anything.
+
 ## Known limitations
 
 - Reroute cleanup works on native reroute dots; legacy Reroute nodes are laid out

@@ -1,0 +1,22 @@
+name: Registry scan
+
+# Runs the pre-publish check on every push and pull request, so a line the Comfy
+# Registry would flag shows up before a release is attempted.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Check for patterns the Registry flags
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Scan
+        run: python3 .github/scripts/registry_scan.py
