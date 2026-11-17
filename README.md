@@ -1,5 +1,9 @@
 # ComfyUI Prettifier
 
+![Prettifier](docs/banner.png)
+
+**Alt + P** prettifies the workflow. **Alt + Shift + P** opens the options.
+
 Turns a tangled ComfyUI workflow into a clean, readable one with a single shortcut.
 It lays nodes out along the flow of the graph, straightens links, resizes nodes,
 creates or tidies groups, and gives you a lot of knobs to make the result look the
@@ -84,8 +88,20 @@ set several options at once. **Apply** saves the options as your defaults; **Can
   numbering of duplicates, and find/replace rules.
 - **Collapse and inactive nodes.** Auto-collapse nodes matching a pattern (loaders,
   primitives…), expand everything, and dim and/or collapse muted or bypassed nodes.
-- **Palettes and themes.** Five built-in color palettes plus a custom one. Save any
-  set of options as a named theme, and export or import themes as JSON files.
+- **Colors.** Fifteen built-in color palettes (ComfyUI classic, Pastel, Vivid,
+  Monochrome, Ocean, Sunset, Forest, Earth, Neon, Candy, High contrast, Nord,
+  Dracula, Solarized, Gruvbox) plus a custom one.
+  - *Nodes* can match the color of the group they are in, or be colored by
+    pipeline stage, by node type or by category. Your own rules
+    (`KSampler = #8e44ad; Loader = #1f618d`) win over all of these.
+  - *Groups* can be colored by stage, get a different palette color each, or
+    share one color. They can be drawn filled at any opacity, or as an outline only.
+  - *Links* can be colored by data type (model, latent, image, ...) from one of
+    six link schemes, or follow the palette.
+
+  ![colors](docs/colors.png)
+- **Themes.** Save any set of options, colors included, as a named theme in the
+  options dialog, and export or import themes as JSON files to share them.
 - **Per-workflow options.** The options a workflow was prettified with are stored
   in the workflow file and reused next time.
 - **Summary note.** A note listing models, LoRAs, resolution, sampler settings and
@@ -135,7 +151,7 @@ connectors that would end up with the same label are numbered. Inside a subgraph
 | Nodes | Collapse mode and pattern, muted/bypassed style, subgraphs, subgraph connector order |
 | Renaming | Rename on prettify, title mode/template/criteria/type filter/capitalization/numbering/rules, connector mode/template/sides/only connected/widget inputs/capitalization/rules, subgraph connector mode/template |
 | Notes | Summary note on/off, type, title, include prompts |
-| Appearance | Palette, custom palette JSON, node colors, link style, animation, zoom to fit |
+| Appearance | Palette, custom palette JSON, node colors (by group, stage, type, category), custom node color rules, link colors by data type, link style, animation, zoom to fit |
 | Behavior | Scope, prettify on open/save, remember and use per-workflow options, summary message |
 | Lint | Check on prettify, each check on/off, step and CFG thresholds |
 
@@ -195,6 +211,8 @@ web/extras.js      reroutes, collapse rules, summary note, per-workflow options,
 web/subgraphs.js   subgraph inputs/outputs: renaming, reordering, undo
 web/variables.js   Set / Get variable nodes and swapping links for them
 web/themes.js      palettes, saved themes, export/import
+web/colors.js      color helpers, node coloring rules
+web/display.js     link colors by data type, group fill and outline
 web/dialog.js      options dialog with live preview
 web/lintdialog.js  lint report panel
 tests/             Node tests for the engine (node tests/test_layout.mjs --svg)
@@ -212,6 +230,7 @@ node tests/test_lint.mjs
 node tests/test_reroutes.mjs
 node tests/test_subgraphs.mjs
 node tests/test_variables.mjs
+node tests/test_colors.mjs
 ```
 
 Before a release, `python3 .github/scripts/registry_scan.py` checks the files that

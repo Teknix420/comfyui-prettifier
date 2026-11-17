@@ -82,9 +82,16 @@ export const OPTIONS = [
   slider("categoryDepth", "Groups", "Category depth", 1, 4, 1, "For 'Node category': how many levels of the category path to use (e.g. 1 = 'image', 2 = 'image/upscaling')."),
   slider("groupPadding", "Groups", "Group padding", 0, 120, 2),
   slider("groupFontSize", "Groups", "Group title size", 10, 64, 1),
+  combo("groupFill", "Groups", "Group background", [
+    opt("default", "ComfyUI default"),
+    opt("fill", "Filled, at the opacity below"),
+    opt("outline", "Outline only"),
+  ], "How every group is drawn in the editor. Outline only keeps the border and title and leaves the inside clear. A display setting, not saved in the workflow."),
+  slider("groupOpacity", "Groups", "Group background opacity (%)", 0, 100, 5, "Used with 'Filled'. ComfyUI's own value is 25."),
   combo("groupColor", "Groups", "Group color", [
     opt("auto", "Auto (keep existing, stage colors for new)"),
     opt("stage", "By pipeline stage"),
+    opt("cycle", "A different palette color for each group"),
     opt("single", "Single color"),
     opt("none", "Don't change"),
   ]),
@@ -154,9 +161,28 @@ export const OPTIONS = [
   bool("noteIncludePrompts", "Notes", "Include prompt text"),
 
   // Appearance
-  combo("palette", "Appearance", "Color palette", [opt("default", "ComfyUI classic"), opt("pastel", "Pastel"), opt("vivid", "Vivid"), opt("mono", "Monochrome"), opt("ocean", "Ocean"), opt("custom", "Custom (JSON below)")], "Colors used for stage-colored groups and nodes."),
+  combo("palette", "Appearance", "Color palette", [opt("default", "ComfyUI classic"), opt("pastel", "Pastel"), opt("vivid", "Vivid"), opt("mono", "Monochrome"), opt("ocean", "Ocean"), opt("sunset", "Sunset"), opt("forest", "Forest"), opt("earth", "Earth"), opt("neon", "Neon"), opt("candy", "Candy"), opt("contrast", "High contrast"), opt("nord", "Nord"), opt("dracula", "Dracula"), opt("solarized", "Solarized"), opt("gruvbox", "Gruvbox"), opt("custom", "Custom (JSON below)")], "Colors used for stage-colored groups and nodes."),
   text("customPalette", "Appearance", "Custom palette JSON", 'Stage name to colors: {"Models": ["#group", "#nodeTitle", "#nodeBody"], "Prompt": "#groupOnly"}. Stages: Models, Inputs, Prompt, Sampling, Latent, Image, Mask, Output, Utilities, Other.'),
-  combo("colorNodes", "Appearance", "Node colors", [opt("keep", "Don't change"), opt("stage", "Color by pipeline stage"), opt("clear", "Reset to default")]),
+  combo("colorNodes", "Appearance", "Node colors", [
+    opt("keep", "Don't change"),
+    opt("group", "Match the group the node is in"),
+    opt("stage", "Color by pipeline stage"),
+    opt("type", "Color by node type (same type, same color)"),
+    opt("category", "Color by node category"),
+    opt("clear", "Reset to default"),
+  ], "Match the group: each node takes a darker shade of its group's color, and nodes outside any group go back to the default. By type and by category pick colors from the palette."),
+  text("nodeColorRules", "Appearance", "Custom node color rules", "pattern = color, separated by ; . The pattern is a regular expression matched against node type, title, category and pipeline stage. A rule wins over the choice above, and works even with 'Don't change'. Example: KSampler = #8e44ad; Loader = #1f618d; Save|Preview = #a93226"),
+  combo("linkColors", "Appearance", "Link colors by data type", [
+    opt("keep", "Don't change"),
+    opt("palette", "Follow the color palette above"),
+    opt("vivid", "Vivid"),
+    opt("pastel", "Pastel"),
+    opt("neon", "Neon"),
+    opt("warm", "Warm"),
+    opt("cool", "Cool"),
+    opt("mono", "Monochrome"),
+    opt("classic", "Back to ComfyUI's own colors"),
+  ], "Every data type (model, latent, image, ...) gets its own link and connector color. This is a display setting of the editor, not something saved in the workflow."),
   combo("linkStyle", "Appearance", "Link style", [opt("keep", "Don't change"), opt("spline", "Spline"), opt("linear", "Linear"), opt("straight", "Straight (right angles)")]),
   bool("animate", "Appearance", "Animate node movement"),
   slider("animationMs", "Appearance", "Animation duration (ms)", 0, 2000, 50),
@@ -206,6 +232,10 @@ export const OPTIONS = [
 
 export const EXTRA_DEFAULTS = {
   colorNodes: "keep",
+  linkColors: "keep",
+  groupFill: "default",
+  groupOpacity: 25,
+  nodeColorRules: "",
   linkStyle: "keep",
   animate: true,
   animationMs: 350,

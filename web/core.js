@@ -2,6 +2,7 @@
 
 import { readOptions, ALL_DEFAULTS } from "./settings.js";
 import { resolvePalette } from "./themes.js";
+import { applyLinkColors, applyGroupStyle } from "./display.js";
 import {
   resolveScope,
   prettifyNodes,
@@ -50,6 +51,16 @@ export function toast(app, severity, summary, detail) {
 function linksAreOrthogonal(app, o) {
   const mode = LINK_MODES[o.linkStyle] ?? app.canvas?.links_render_mode;
   return mode === LINK_MODES.straight;
+}
+
+/** Link colors by data type and group drawing style (editor display settings). */
+export function applyDisplay(app, o = effectiveOptions(app)) {
+  try {
+    applyLinkColors(app, o.linkColors, resolvePalette(o).group);
+    applyGroupStyle(app, o.groupFill, o.groupOpacity);
+  } catch (err) {
+    console.warn("[Prettifier] could not apply display settings", err);
+  }
 }
 
 function applyLinkStyle(app, style) {
@@ -212,6 +223,7 @@ export function prettify(app, { scope, overrides, animate, recordUndo = true, qu
     tracker?.afterChange?.();
   }
   applyLinkStyle(app, o.linkStyle);
+  applyDisplay(app, o);
   let issues = null;
   if (o.lintOnPrettify && !quiet) issues = runLint(graph, o);
   if (!quiet && o.showToast) {

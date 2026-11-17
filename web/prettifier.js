@@ -3,7 +3,7 @@
 
 import { app } from "../../scripts/app.js";
 import { settingDefinitions } from "./settings.js";
-import { prettify, undoLast, renameOnly, reroutesOnly, summaryNote, toast, linksToVariablesNow, variablesToLinksNow } from "./core.js";
+import { applyDisplay, prettify, undoLast, renameOnly, reroutesOnly, summaryNote, toast, linksToVariablesNow, variablesToLinksNow } from "./core.js";
 import { registerVariableNodes } from "./variables.js";
 import { openLintReport } from "./lintdialog.js";
 import { forgetWorkflowOptions, isStampCurrent } from "./extras.js";
@@ -97,9 +97,20 @@ function hookSave() {
   }
 }
 
+// Display settings take effect as soon as they are changed, without a prettify.
+const DISPLAY_KEYS = new Set(["linkColors", "groupFill", "groupOpacity", "palette", "customPalette"]);
+let displayTimer = 0;
+function refreshDisplay(delay = 0) {
+  clearTimeout(displayTimer);
+  displayTimer = setTimeout(() => applyDisplay(app), delay);
+}
+function onOptionChange(key) {
+  if (DISPLAY_KEYS.has(key)) refreshDisplay(30);
+}
+
 app.registerExtension({
   name: "Comfy.Prettifier",
-  settings: settingDefinitions(),
+  settings: settingDefinitions(onOptionChange),
   commands,
   keybindings: [
     { combo: { key: "p", alt: true }, commandId: "Prettifier.Prettify" },
@@ -126,6 +137,7 @@ app.registerExtension({
   // Prettify on open (optional). Skipped during undo/redo and when the arrangement
   // is still the one Prettifier produced.
   afterConfigureGraph() {
+    refreshDisplay(100); // a newly opened workflow can bring new data types
     const mode = getOption(app, "autoRun");
     if (mode !== "load" && mode !== "both") return;
     const tracker = app.extensionManager?.workflow?.activeWorkflow?.changeTracker;
@@ -143,6 +155,7 @@ app.registerExtension({
 
   setup() {
     hookSave();
+    refreshDisplay(500);
     // Older frontends without getCanvasMenuItems / extension commands: patch the canvas menu.
     if (app.extensionManager?.command) return;
     const LGraphCanvas = globalThis.LGraphCanvas;

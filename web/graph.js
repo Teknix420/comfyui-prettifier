@@ -2,7 +2,8 @@
 // Reads the live graph into the engine's model, applies results, and keeps
 // snapshots so a prettify can be undone or previewed.
 
-import { computeLayout, STAGE_NODE_COLORS, stageOf } from "./layout.js";
+import { computeLayout, STAGE_GROUP_COLORS, STAGE_NODE_COLORS, stageOf } from "./layout.js";
+import { planNodeColors } from "./colors.js";
 import { computeRenames } from "./rename.js";
 import { isVariableNode, variableNeighbor } from "./variables.js";
 
@@ -455,19 +456,6 @@ export function prettifyNodes(app, graph, nodes, opts) {
     if (!n || !r.moved) continue;
     if (resized && !n.flags?.collapsed) setNodeSize(n, [r.w, r.h]);
     moves.push({ n, from: [n.pos[0], n.pos[1]], to: [r.x, r.y] });
-    if (opts.colorNodes === "stage") {
-      const c = (opts.paletteColors?.node ?? STAGE_NODE_COLORS)[r.stage];
-      if (c) {
-        n.color = c.color;
-        n.bgcolor = c.bgcolor;
-      } else {
-        delete n.color;
-        delete n.bgcolor;
-      }
-    } else if (opts.colorNodes === "clear") {
-      delete n.color;
-      delete n.bgcolor;
-    }
   }
 
   // Groups.
@@ -491,6 +479,34 @@ export function prettifyNodes(app, graph, nodes, opts) {
     if (ng.color) g.color = ng.color;
     graph.add(g);
     setGroupRect(g, ng);
+  }
+
+  // Node colors, now that the groups have their final place and color.
+  if ((opts.colorNodes && opts.colorNodes !== "keep") || opts.nodeColorRules) {
+    const info = new Map(model.nodes.map((n) => [n.id, n]));
+    const target = new Map(moves.map((m) => [m.n.id, m.to]));
+    const rects = graphGroups(graph).map((g) => ({ color: g.color, ...groupRect(g) }));
+    const described = res.nodes
+      .filter((r) => r.moved && byId.has(r.id))
+      .map((r) => {
+        const n = byId.get(r.id), i = info.get(r.id) ?? {};
+        const [x, y] = target.get(r.id) ?? n.pos;
+        const cx = x + (n.size?.[0] ?? 0) / 2, cy = y + (n.flags?.collapsed ? 0 : (n.size?.[1] ?? 0) / 2);
+        // The innermost group that holds the node.
+        const holder = rects.filter((g) => cx >= g.x && cx <= g.x + g.w && cy >= g.y && cy <= g.y + g.h).sort((a, b) => a.w * a.h - b.w * b.h)[0];
+        return { id: r.id, type: i.type ?? n.type, title: n.title, category: i.category, stage: r.stage, groupColor: holder?.color };
+      });
+    const palette = opts.paletteColors ?? { group: STAGE_GROUP_COLORS, node: STAGE_NODE_COLORS };
+    for (const [id, c] of planNodeColors(described, opts, palette)) {
+      const n = byId.get(id);
+      if (c) {
+        n.color = c.color;
+        n.bgcolor = c.bgcolor;
+      } else {
+        delete n.color;
+        delete n.bgcolor;
+      }
+    }
   }
 
   // Passes that need final positions (reroute cleanup) run with nodes placed, before any animation.

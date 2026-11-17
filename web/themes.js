@@ -3,6 +3,7 @@
 // Prettifier options (including the palette) that can be saved, exported, imported.
 
 import { STAGES, STAGE_GROUP_COLORS, STAGE_NODE_COLORS } from "./layout.js";
+import { nodeColorsFrom } from "./colors.js";
 
 const pal = (colors) => {
   // colors: stage -> [groupColor, nodeTitleColor, nodeBodyColor]
@@ -12,6 +13,16 @@ const pal = (colors) => {
     group[s] = c[0];
     node[s] = c[1] ? { color: c[1], bgcolor: c[2] } : null;
   }
+  return { group, node };
+};
+
+// One color per stage, in the order of STAGES; node colors are darker shades of it.
+const scheme = (...colors) => {
+  const group = {}, node = {};
+  STAGES.forEach((s, i) => {
+    group[s] = colors[i] ?? colors[colors.length - 1];
+    node[s] = nodeColorsFrom(group[s]);
+  });
   return { group, node };
 };
 
@@ -37,6 +48,17 @@ export const PALETTES = {
     Sampling: ["#2874a6", "#184563", "#21608a"], Latent: ["#5499c7", "#2c5370", "#3d749c"], Image: ["#7fb3d5", "#3a5568", "#517791"],
     Mask: ["#45b39d", "#27665a", "#368d7c"], Output: ["#f4d03f", "#5e5018", "#857122"], Utilities: ["#34495e", "#1c2732", "#273746"], Other: ["#5d6d7e", "#2f3740", "#414d59"],
   }),
+  //             Models     Inputs     Prompt     Sampling   Latent     Image      Mask       Output     Utilities  Other
+  sunset: scheme("#c0392b", "#e67e22", "#f39c12", "#d35400", "#f1c40f", "#e74c3c", "#cd6155", "#ff6f91", "#7b5e57", "#8d6e63"),
+  forest: scheme("#2e7d32", "#558b2f", "#7cb342", "#1b5e20", "#9e9d24", "#00796b", "#6d4c41", "#c0ca33", "#4e5d4a", "#607d5b"),
+  earth: scheme("#8d6e63", "#a1887f", "#9e9d24", "#795548", "#c9a66b", "#6d8a6f", "#b07d62", "#bf5b3c", "#5d5348", "#75695c"),
+  neon: scheme("#00e5ff", "#00ff9d", "#aaff00", "#ff00e5", "#ffee00", "#7c4dff", "#ff9100", "#ff1744", "#546e7a", "#78909c"),
+  candy: scheme("#ff8fab", "#a0e7e5", "#b4f8c8", "#cdb4db", "#fbe7c6", "#a2d2ff", "#ffc8a2", "#ff9aa2", "#b8b8d1", "#c9c9d9"),
+  contrast: scheme("#0057ff", "#00b3a4", "#00a651", "#9b00ff", "#ffd400", "#ff00aa", "#ff7a00", "#ff0000", "#c0c0c0", "#9e9e9e"),
+  nord: scheme("#5e81ac", "#88c0d0", "#a3be8c", "#b48ead", "#ebcb8b", "#81a1c1", "#d08770", "#bf616a", "#4c566a", "#616e88"),
+  dracula: scheme("#6272a4", "#8be9fd", "#50fa7b", "#bd93f9", "#f1fa8c", "#ff79c6", "#ffb86c", "#ff5555", "#44475a", "#7a7f99"),
+  solarized: scheme("#268bd2", "#2aa198", "#859900", "#6c71c4", "#b58900", "#d33682", "#cb4b16", "#dc322f", "#586e75", "#657b83"),
+  gruvbox: scheme("#458588", "#689d6a", "#98971a", "#b16286", "#d79921", "#83a598", "#d65d0e", "#cc241d", "#665c54", "#7c6f64"),
 };
 
 /** Resolve the palette named in the options (falls back to default on bad custom JSON). */

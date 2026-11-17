@@ -1242,8 +1242,11 @@ export function computeLayout(model, userOpts = {}) {
     }
     return [...c].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "Other";
   };
-  const colorFor = (ids, existing) => {
+  const cycleColors = [...new Set(Object.values(o.stageGroupColors ?? STAGE_GROUP_COLORS))];
+  const colorFor = (ids, existing, index = 0) => {
     switch (o.groupColor) {
+      case "cycle":
+        return cycleColors[index % cycleColors.length];
       case "single":
         return o.groupSingleColor;
       case "stage":
@@ -1272,7 +1275,7 @@ export function computeLayout(model, userOpts = {}) {
       if (!r) continue;
       rects.set(gr.index, r);
       const upd = { index: gr.index, ...r };
-      const col = colorFor(mem, gr.color);
+      const col = colorFor(mem, gr.color, existing.indexOf(gr));
       if (col !== gr.color) upd.color = col;
       if (o.groupRestyleExisting) upd.fontSize = o.groupFontSize;
       result.groupUpdates.push(upd);
@@ -1289,7 +1292,7 @@ export function computeLayout(model, userOpts = {}) {
       let title = fillTemplate(o.groupTitleTemplate || "{name}", { name, count: ids.length, n: made.length + 1, stage: majorityStage(ids) });
       title = applyRules(title, titleRules, name) || name;
       // A color given by a custom rule wins over the color mode.
-      made.push({ title, color: cl.colors.get(k) ?? colorFor(ids), fontSize: o.groupFontSize, ...r });
+      made.push({ title, color: cl.colors.get(k) ?? colorFor(ids, undefined, made.length), fontSize: o.groupFontSize, ...r });
     }
     if (o.groupNumberDuplicates) {
       const byTitle = new Map();
