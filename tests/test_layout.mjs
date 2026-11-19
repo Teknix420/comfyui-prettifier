@@ -331,6 +331,18 @@ for (const [name, wf, opts] of cases) {
   const narrow = r.loose.w;
   r = run({ looseAlign: "nodes", looseMatchWidth: true });
   check(r.loose.x === r.loader.x && r.loose.w === r.loader.w && r.loose.w >= narrow, "match width: the loose node is as wide as the grouped nodes");
+  {
+    // Loose nodes that end up side by side in a row must not be widened into each other.
+    const row = JSON.parse(JSON.stringify(wf));
+    row.nodes.push(
+      { id: 20, type: "PrimitiveInt", category: "utils", pos: [0, 900], size: [210, 60], widgets_values: [1] },
+      { id: 21, type: "PrimitiveFloat", category: "utils", pos: [300, 900], size: [210, 60], widgets_values: [1] },
+      { id: 22, type: "PrimitiveString", category: "utils", pos: [600, 900], size: [210, 60], widgets_values: [1] },
+    );
+    const model = modelFromWorkflow(row);
+    const all = { groupBy: "stage", minGroupSize: 2, groupExclude: "Utilities", looseAlign: "nodes", looseMatchWidth: true, hGap: 10 };
+    validate("match width, row of loose nodes", model, computeLayout(model, all), { ...DEFAULTS, ...all });
+  }
   r = run({ looseAlign: "nodes", looseMatchWidth: true, widthMode: "keep" });
   check(r.loose.w === 210, "match width leaves widths alone when node widths are kept");
   r = run({ looseAlign: "nodes", columnAlign: "right", widthMode: "keep" });

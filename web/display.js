@@ -104,6 +104,25 @@ export function applyLinkColors(app, mode, stageColors) {
   return true;
 }
 
+/** The link colors as they are now, and a way to put them back (used by the dialog's Cancel). */
+export function snapshotLinkColors(app) {
+  const table = canvasClass(app)?.link_type_colors;
+  const slots = app.canvas?.default_connection_color_byType;
+  return { table: table ? { ...table } : null, slots: slots ? { ...slots } : null, applied: new Set(appliedTypes) };
+}
+
+export function restoreLinkColors(app, snap) {
+  const put = (target, saved) => {
+    if (!target || !saved) return;
+    for (const k of Object.keys(target)) if (!(k in saved)) delete target[k];
+    Object.assign(target, saved);
+  };
+  put(canvasClass(app)?.link_type_colors, snap?.table);
+  put(app.canvas?.default_connection_color_byType, snap?.slots);
+  if (snap?.applied) appliedTypes = new Set(snap.applied);
+  app.canvas?.setDirty?.(true, true);
+}
+
 // --- groups ---------------------------------------------------------------------
 
 const groupStyle = { mode: "default", opacity: 25 };

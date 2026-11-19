@@ -216,7 +216,7 @@ export function prettify(app, { scope, overrides, animate, recordUndo = true, qu
     }
   } catch (err) {
     console.error("[Prettifier] failed", err);
-    toast(app, "error", "Prettifier failed", String(err?.message ?? err));
+    toast(app, "error", "Prettifier Failed", String(err?.message ?? err));
     if (recordUndo && lastSnapshot) restoreAll(lastSnapshot);
     return null;
   } finally {
@@ -236,7 +236,7 @@ export function prettify(app, { scope, overrides, animate, recordUndo = true, qu
     if (stats.variables) parts.push(`${stats.variables} link${stats.variables === 1 ? "" : "s"} replaced by variables`);
     if (stats.subgraphs) parts.push(`${stats.subgraphs} subgraph${stats.subgraphs === 1 ? "" : "s"}`);
     if (issues?.length) parts.push(`${issues.length} lint finding${issues.length === 1 ? "" : "s"} (run "Lint workflow")`);
-    toast(app, "success", "Workflow prettified", parts.join(", ") + ".");
+    toast(app, "success", "Workflow Prettified", parts.join(", ") + ".");
   }
   return stats;
 }
@@ -335,12 +335,28 @@ export function summaryNote(app) {
   }
   notifyChanged(app, graph);
   app.canvas?.setDirty?.(true, true);
-  if (o.showToast) toast(app, "success", "Summary note", r.created ? "Created." : "Updated.");
+  if (o.showToast) toast(app, "success", "Summary Note", r.created ? "Created." : "Updated.");
   return r.note;
 }
 
 export function hasUndo() {
   return !!lastSnapshot;
+}
+
+/**
+ * Does the snapshot still describe what is on the canvas? After another workflow
+ * is opened, or ComfyUI's own undo rebuilds the graph, its nodes are gone, and
+ * restoring it would swap the open workflow's groups for the old ones.
+ */
+export function snapshotIsCurrent(app, snap) {
+  const main = snap?.parts?.[0]?.main;
+  if (!main) return false;
+  const root = app.rootGraph ?? app.graph;
+  const live = new Set([root, activeGraph(app), ...allSubgraphs(app)]);
+  if (!live.has(main.graph)) return false;
+  if (!main.nodes.length) return true;
+  const now = new Set(graphNodes(main.graph));
+  return main.nodes.some((s) => now.has(s.node));
 }
 
 export function undoLast(app) {
@@ -349,6 +365,11 @@ export function undoLast(app) {
     return false;
   }
   cancelAnimation();
+  if (!snapshotIsCurrent(app, lastSnapshot)) {
+    lastSnapshot = null;
+    toast(app, "info", "Prettifier", "Nothing to undo here: the last prettify was on a workflow that is no longer open. Use Ctrl+Z instead.");
+    return false;
+  }
   restoreAll(lastSnapshot);
   notifyChanged(app, lastSnapshot.graph);
   lastSnapshot = null;

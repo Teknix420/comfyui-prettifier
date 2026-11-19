@@ -1,7 +1,7 @@
 [project]
 name = "comfyui-prettifier"
 description = "Alt+P prettifies the workflow, Alt+Shift+P opens the options. Makes ComfyUI workflows readable and good looking: auto-layout by graph flow, link straightening and rerouting, grouping, node and link colors, color palettes, renaming, themes and a lint report, with lots of options."
-version = "0.4.0"
+version = "0.4.1"
 license = { file = "LICENSE" }
 dependencies = []
 

@@ -4,7 +4,7 @@
 
 import { stageOf } from "./layout.js";
 import { lintModel } from "./lint.js";
-import { graphNodes, getLink, isNote, titleHeight, nodeCategory, defaultTitle, graphLinks, graphGroups, groupRect } from "./graph.js";
+import { graphNodes, getLink, isNote, titleHeight, nodeCategory, defaultTitle, graphLinks, graphGroups, groupRect, nodeRect } from "./graph.js";
 
 const LG = () => globalThis.LiteGraph || {};
 const safeRegex = (src) => {
@@ -47,6 +47,11 @@ export function applyCollapseRules(nodes, o) {
       if (n.color !== INACTIVE_COLORS.color || n.bgcolor !== INACTIVE_COLORS.bgcolor) changed++;
       n.color = INACTIVE_COLORS.color;
       n.bgcolor = INACTIVE_COLORS.bgcolor;
+    } else if (!inactive && (o.inactiveStyle === "dim" || o.inactiveStyle === "both") && n.color === INACTIVE_COLORS.color && n.bgcolor === INACTIVE_COLORS.bgcolor) {
+      // Switched back on since it was dimmed: give it its normal look back.
+      delete n.color;
+      delete n.bgcolor;
+      changed++;
     }
   }
   return changed;
@@ -63,11 +68,7 @@ function slotPos(node, isInput, slot) {
   return [node.pos[0] + (isInput ? 0 : node.size[0]), node.pos[1] + (slot + 0.7) * (LG().NODE_SLOT_HEIGHT ?? 20) - (node.flags?.collapsed ? th / 2 : 0)];
 }
 
-function nodeBox(n) {
-  const th = titleHeight();
-  const collapsed = !!n.flags?.collapsed;
-  return { x: n.pos[0], y: n.pos[1] - th, w: collapsed ? n._collapsed_width ?? 120 : n.size[0], h: collapsed ? th : n.size[1] + th };
-}
+const nodeBox = (n) => nodeRect(n, titleHeight());
 
 function segmentHitsBox(ax, ay, bx, by, r, m) {
   // Liang-Barsky clip of segment against the box grown by margin m.
@@ -123,7 +124,7 @@ function levelRoute(sx, sy, tx, ty, others, gap, margin, lane, mid, seg = (ax, a
     // Go around the first thing in the way: at the input's height when that is
     // clear of it (the rest of the link is then level), otherwise just above or below.
     const set = new Set([blocked.reduce((a, b) => (b.x < a.x ? b : a))]);
-    let ly, dir, ax, bx, direct, gutter, ok = false;
+    let ly, laneBase, dir, ax, bx, direct, gutter, ok = false;
     for (let iter = 0; iter < 8; iter++) {
       const arr = [...set];
       const top = Math.min(...arr.map((b) => b.y)), bottom = Math.max(...arr.map((b) => b.y + b.h));
@@ -136,6 +137,9 @@ function levelRoute(sx, sy, tx, ty, others, gap, margin, lane, mid, seg = (ax, a
         const costA = Math.abs(y - above) + Math.abs(ty - above), costB = Math.abs(y - below) + Math.abs(ty - below);
         dir = costA <= costB ? -1 : 1;
         ly = dir < 0 ? above : below;
+        // Links that share a lane sit side by side; check the lane this one will really use.
+        laneBase = ly;
+        ly += (lane.peek?.(laneBase) ?? 0) * 10 * dir;
       }
       bx = left - gap;
       ax = bx - gap;
@@ -165,7 +169,7 @@ function levelRoute(sx, sy, tx, ty, others, gap, margin, lane, mid, seg = (ax, a
       more.forEach((b) => set.add(b));
     }
     if (!ok) return null;
-    if (dir) ly += lane(ly) * 10 * dir;
+    if (dir) lane(laneBase);
     if (gutter) ax = bx = mid.spread(bx, gutter);
     if (!direct) pts.push([ax, y]);
     pts.push([bx, ly]);
@@ -236,6 +240,7 @@ export function cleanReroutes(graph, nodes, o) {
     lanes.set(key, uses + 1);
     return uses;
   };
+  lane.peek = (y) => lanes.get(Math.round(y / 8)) || 0;
 
   // With right-angle ("straight") links ComfyUI draws a link between two points at
   // different heights as level, a vertical step half-way, level. Test that path.
@@ -372,7 +377,7 @@ export function cleanReroutes(graph, nodes, o) {
     }
 
     // Grow the set of obstacles until the detour lane itself is clear.
-    let top, bottom, left, right, y, ax, bx, gl, gr;
+    let top, bottom, left, right, y, base, ax, bx, gl, gr;
     const span = backward ? boxes.filter((b) => b.x < sx + 40 && b.x + b.w > tx - 40) : hit;
     let set = new Set(span.length ? span : hit);
     if (backward) {
@@ -386,8 +391,6 @@ export function cleanReroutes(graph, nodes, o) {
       left = Math.min(...arr.map((b) => b.x));
       right = Math.max(...arr.map((b) => b.x + b.w));
       const above = top - margin, below = bottom + margin;
-      const costA = Math.abs(sy - above) + Math.abs(ty - above), costB = Math.abs(sy - below) + Math.abs(ty - below);
-      y = backward ? below : costA <= costB ? above : below;
       ax = backward ? sx + gap : Math.max(sx + 16, left - gap);
       bx = backward ? tx - gap : Math.min(tx - 16, right + gap);
       gl = gr = null;
@@ -401,6 +404,15 @@ export function cleanReroutes(graph, nodes, o) {
           bx = cb;
         }
       }
+      // Links that share a lane sit side by side: judge the lane this one will really use.
+      const shifted = (v) => v + lane.peek(v) * 10 * (v < (sy + ty) / 2 ? -1 : 1);
+      // The cheaper side, unless getting there would cut through one of the very
+      // things the link goes around (a node above the source in its own column, say).
+      const cut = (v) => arr.some((b) => seg(sx, sy, ax, shifted(v), b) || seg(bx, shifted(v), tx, ty, b));
+      const costA = Math.abs(sy - above) + Math.abs(ty - above), costB = Math.abs(sy - below) + Math.abs(ty - below);
+      const [first, second] = costA <= costB ? [above, below] : [below, above];
+      base = backward ? below : cut(first) && !cut(second) ? second : first;
+      y = shifted(base);
       const x0 = backward ? tx - 30 : left - 30, x1 = backward ? sx + 30 : right + 30;
       const free = others.filter((b) => !set.has(b));
       // The lane must be clear, and so must the legs from the source and to the target.
@@ -412,12 +424,36 @@ export function cleanReroutes(graph, nodes, o) {
       if (!blockers.length) break;
       blockers.forEach((b) => set.add(b));
     }
-    const shift = lane(y) * 10 * (y < (sy + ty) / 2 ? -1 : 1);
-    y += shift;
-    if (gl) {
-      ax = mid.spread(ax, gl);
-      bx = mid.spread(bx, gr);
+    lane(base);
+    // The step up or down to the lane must not cut through a neighbour in the same
+    // column: a collapsed node is narrower than its column, so its link leaves from
+    // the middle of it. Move the step into the free gap beside the column.
+    if (!backward && (ortho || turnPref)) {
+      const stepHits = (x, y0, y1) =>
+        others.filter((b) => x > b.x - 2 && x < b.x + b.w + 2 && Math.max(y0, y1) > b.y - 2 && Math.min(y0, y1) < b.y + b.h + 2);
+      const out = stepHits(ax, sy, y);
+      if (out.length) {
+        const edge = Math.max(...out.map((b) => b.x + b.w));
+        const g = mid ? mid.rightOf(edge, tx) : null;
+        const nx = g && g[1] - g[0] >= 16 ? (g[0] + g[1]) / 2 : edge + Math.min(gap, 16);
+        if (nx < tx - 8 && !stepHits(nx, sy, y).length && clear(others, [sx, sy], [nx, sy])) {
+          ax = nx;
+          gl = g;
+        }
+      }
+      const into = stepHits(bx, y, ty);
+      if (into.length) {
+        const edge = Math.min(...into.map((b) => b.x));
+        const g = mid ? mid.leftOf(edge, sx) : null;
+        const nx = g && g[1] - g[0] >= 16 ? (g[0] + g[1]) / 2 : edge - Math.min(gap, 16);
+        if (nx > ax + 20 && !stepHits(nx, y, ty).length && clear(others, [nx, ty], [tx, ty])) {
+          bx = nx;
+          gr = g;
+        }
+      }
     }
+    if (gl) ax = mid.spread(ax, gl);
+    if (gr) bx = mid.spread(bx, gr);
     if (!backward && bx - ax < 20) continue;
     const pts = [[ax, y], [bx, y]];
     // With right-angle links, or a direction preference, every turn gets its own
@@ -630,10 +666,11 @@ export function placeSubgraphIO(sg, gap = 120) {
   const nodes = graphNodes(sg);
   if (!nodes.length) return;
   const th = titleHeight();
-  const x0 = Math.min(...nodes.map((n) => n.pos[0]));
-  const x1 = Math.max(...nodes.map((n) => n.pos[0] + n.size[0]));
-  const y0 = Math.min(...nodes.map((n) => n.pos[1] - th));
-  const y1 = Math.max(...nodes.map((n) => n.pos[1] + n.size[1]));
+  const rects = nodes.map((n) => nodeRect(n, th));
+  const x0 = Math.min(...rects.map((r) => r.x));
+  const x1 = Math.max(...rects.map((r) => r.x + r.w));
+  const y0 = Math.min(...rects.map((r) => r.y));
+  const y1 = Math.max(...rects.map((r) => r.y + r.h));
   const place = (io, x) => {
     if (!io?.pos) return;
     const h = io.size?.[1] ?? io.boundingRect?.[3] ?? 100;

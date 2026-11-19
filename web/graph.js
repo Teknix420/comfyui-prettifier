@@ -87,11 +87,11 @@ function hasLargeContent(node) {
 }
 
 let measureCtx = null;
-function textWidth(text) {
+function textWidth(text, font) {
   if (!text) return 0;
   try {
     measureCtx ??= document.createElement("canvas").getContext("2d");
-    measureCtx.font = `${LG().NODE_TEXT_SIZE ?? 14}px Arial`;
+    measureCtx.font = font || `${LG().NODE_TEXT_SIZE ?? 14}px Arial`;
     return measureCtx.measureText(String(text)).width;
   } catch {
     return String(text).length * 8;
@@ -99,8 +99,26 @@ function textWidth(text) {
 }
 
 function collapsedWidth(n) {
-  const est = Math.min(n.size[0], textWidth(n.title) + titleHeight() * 2);
+  // The frontend's own formula, with the font the title is drawn in.
+  const est = Math.min(n.size[0], textWidth(n.title, n.titleFontStyle) + titleHeight() * 2);
   return Math.max(n._collapsed_width ?? 0, est) || 120;
+}
+
+/**
+ * The rectangle a node covers on the canvas, title bar included. A collapsed node
+ * is only its title bar: node.size still holds the expanded size, so using it
+ * would place the node far below (and right of) where it is actually drawn.
+ */
+export function nodeRect(n, titleH = titleHeight(), pos = n.pos) {
+  if (n.flags?.collapsed) return { x: pos[0], y: pos[1] - titleH, w: collapsedWidth(n), h: titleH };
+  return { x: pos[0], y: pos[1] - titleH, w: n.size?.[0] ?? 0, h: (n.size?.[1] ?? 0) + titleH };
+}
+
+/** Whether the center of the node, as drawn, lies inside the rectangle. */
+function centerInside(n, r, titleH, pos) {
+  const b = nodeRect(n, titleH, pos);
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  return cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h;
 }
 
 function fitSize(node) {
@@ -137,22 +155,24 @@ export function readModel(graph, nodes) {
   const inScope = new Set(nodes.map((n) => n.id));
   const groups = graphGroups(graph);
 
-  // Group membership: a node belongs to a group if its center is inside it.
+  // Group membership: a node belongs to a group if its center, as drawn, is inside it.
   const groupInfo = groups.map((g, index) => ({ g, index, ...groupRect(g) }));
   const membership = new Map();
   for (const n of graphNodes(graph)) {
-    const cx = n.pos[0] + n.size[0] / 2;
-    const cy = n.pos[1] + n.size[1] / 2 - titleH / 2;
     const containing = groupInfo
-      .filter((g) => cx >= g.x && cx <= g.x + g.w && cy >= g.y && cy <= g.y + g.h)
+      .filter((g) => centerInside(n, g, titleH))
       .sort((a, b) => a.w * a.h - b.w * b.h)
       .map((g) => g.index);
     membership.set(n.id, containing);
   }
   // Only groups whose members are all in scope are touched.
+  let partialGroups = 0;
   const scopeGroups = groupInfo.filter((gi) => {
     const mem = graphNodes(graph).filter((n) => membership.get(n.id).includes(gi.index));
-    return mem.length > 0 && mem.every((n) => inScope.has(n.id));
+    const whole = mem.length > 0 && mem.every((n) => inScope.has(n.id));
+    // A group that holds some of the nodes in scope, and others besides.
+    if (!whole && mem.some((n) => inScope.has(n.id))) partialGroups++;
+    return whole;
   });
 
   const modelNodes = nodes.map((n) => {
@@ -201,6 +221,7 @@ export function readModel(graph, nodes) {
     titleH,
     nodes: modelNodes,
     edges,
+    partialGroups,
     groups: scopeGroups.map((gi) => ({
       index: gi.index,
       title: gi.g.title,
@@ -316,9 +337,8 @@ export function renameNodes(graph, nodes, opts) {
   const titleH = titleHeight();
   const groups = graphGroups(graph).map((g) => ({ g, ...groupRect(g) }));
   const model = nodes.map((n) => {
-    const cx = n.pos[0] + n.size[0] / 2, cy = n.pos[1] + n.size[1] / 2 - titleH / 2;
     const group = groups
-      .filter((g) => cx >= g.x && cx <= g.x + g.w && cy >= g.y && cy <= g.y + g.h)
+      .filter((g) => centerInside(n, g, titleH))
       .sort((a, b) => a.w * a.h - b.w * b.h)[0];
     const widgets = {};
     for (const w of n.widgets || []) if (w?.name && (typeof w.value === "string" || typeof w.value === "number")) widgets[w.name] = w.value;
@@ -448,6 +468,18 @@ export function prettifyNodes(app, graph, nodes, opts) {
 
   const tracker = opts.noHistory ? null : changeTracker(app);
   tracker?.beforeChange?.();
+  try {
+    return applyLayout(app, graph, nodes, opts, model, res, byId, resized, tracker);
+  } catch (err) {
+    // Never leave ComfyUI's undo history held open.
+    try {
+      tracker?.afterChange?.();
+    } catch {}
+    throw err;
+  }
+}
+
+function applyLayout(app, graph, nodes, opts, model, res, byId, resized, tracker) {
 
   // Sizes apply immediately; positions may animate.
   const moves = [];
@@ -490,10 +522,9 @@ export function prettifyNodes(app, graph, nodes, opts) {
       .filter((r) => r.moved && byId.has(r.id))
       .map((r) => {
         const n = byId.get(r.id), i = info.get(r.id) ?? {};
-        const [x, y] = target.get(r.id) ?? n.pos;
-        const cx = x + (n.size?.[0] ?? 0) / 2, cy = y + (n.flags?.collapsed ? 0 : (n.size?.[1] ?? 0) / 2);
+        const at = target.get(r.id) ?? n.pos;
         // The innermost group that holds the node.
-        const holder = rects.filter((g) => cx >= g.x && cx <= g.x + g.w && cy >= g.y && cy <= g.y + g.h).sort((a, b) => a.w * a.h - b.w * b.h)[0];
+        const holder = rects.filter((g) => centerInside(n, g, model.titleH, at)).sort((a, b) => a.w * a.h - b.w * b.h)[0];
         return { id: r.id, type: i.type ?? n.type, title: n.title, category: i.category, stage: r.stage, groupColor: holder?.color };
       });
     const palette = opts.paletteColors ?? { group: STAGE_GROUP_COLORS, node: STAGE_NODE_COLORS };
@@ -596,7 +627,10 @@ export function fitView(app, graph, onlyNodes) {
     x1 = Math.max(x1, x + w);
     y1 = Math.max(y1, y + h);
   };
-  for (const n of nodes) add(n.pos[0], n.pos[1] - titleH, n.size[0], n.size[1] + titleH);
+  for (const n of nodes) {
+    const b = nodeRect(n, titleH);
+    add(b.x, b.y, b.w, b.h);
+  }
   if (!onlyNodes) for (const g of graphGroups(graph)) {
     const r = groupRect(g);
     add(r.x, r.y, r.w, r.h);
@@ -628,42 +662,49 @@ export function alignNodes(app, mode) {
   if (nodes.length < 2) return false;
   const graph = activeGraph(app);
   const titleH = titleHeight();
+  // Work with what is drawn: a collapsed node is only its title bar.
+  const box = new Map(nodes.map((n) => [n, nodeRect(n, titleH)]));
+  const W = (n) => box.get(n).w, H = (n) => box.get(n).h; // H includes the title bar
   const L = Math.min(...nodes.map((n) => n.pos[0]));
-  const R = Math.max(...nodes.map((n) => n.pos[0] + n.size[0]));
+  const R = Math.max(...nodes.map((n) => n.pos[0] + W(n)));
   const T = Math.min(...nodes.map((n) => n.pos[1] - titleH));
-  const B = Math.max(...nodes.map((n) => n.pos[1] + n.size[1]));
+  const B = Math.max(...nodes.map((n) => n.pos[1] - titleH + H(n)));
   const gap = (axis) => {
     const sorted = [...nodes].sort((a, b) => a.pos[axis] - b.pos[axis]);
-    const total = sorted.reduce((s, n) => s + n.size[axis] + (axis ? titleH : 0), 0);
+    const len = (n) => (axis ? H(n) : W(n));
+    const total = sorted.reduce((s, n) => s + len(n), 0);
     const span = axis ? B - T : R - L;
     const g = (span - total) / (sorted.length - 1);
     let cur = axis ? T : L;
     for (const n of sorted) {
       n.pos[axis] = axis ? cur + titleH : cur;
-      cur += n.size[axis] + (axis ? titleH : 0) + g;
+      cur += len(n) + g;
     }
   };
+  const expanded = nodes.filter((n) => !n.flags?.collapsed);
   switch (mode) {
     case "left": nodes.forEach((n) => (n.pos[0] = L)); break;
-    case "right": nodes.forEach((n) => (n.pos[0] = R - n.size[0])); break;
+    case "right": nodes.forEach((n) => (n.pos[0] = R - W(n))); break;
     case "top": nodes.forEach((n) => (n.pos[1] = T + titleH)); break;
-    case "bottom": nodes.forEach((n) => (n.pos[1] = B - n.size[1])); break;
-    case "centerX": nodes.forEach((n) => (n.pos[0] = (L + R) / 2 - n.size[0] / 2)); break;
-    case "centerY": nodes.forEach((n) => (n.pos[1] = (T + B) / 2 - n.size[1] / 2 + titleH / 2)); break;
+    case "bottom": nodes.forEach((n) => (n.pos[1] = B - H(n) + titleH)); break;
+    case "centerX": nodes.forEach((n) => (n.pos[0] = (L + R) / 2 - W(n) / 2)); break;
+    case "centerY": nodes.forEach((n) => (n.pos[1] = (T + B) / 2 - H(n) / 2 + titleH)); break;
     case "distributeX": gap(0); break;
     case "distributeY": gap(1); break;
     case "matchWidth": {
-      const w = Math.max(...nodes.map((n) => n.size[0]));
-      nodes.forEach((n) => setNodeSize(n, [w, n.size[1]]));
+      if (!expanded.length) return false;
+      const w = Math.max(...expanded.map((n) => n.size[0]));
+      expanded.forEach((n) => setNodeSize(n, [w, n.size[1]]));
       break;
     }
     case "matchHeight": {
-      const h = Math.max(...nodes.map((n) => n.size[1]));
-      nodes.forEach((n) => setNodeSize(n, [n.size[0], h]));
+      if (!expanded.length) return false;
+      const h = Math.max(...expanded.map((n) => n.size[1]));
+      expanded.forEach((n) => setNodeSize(n, [n.size[0], h]));
       break;
     }
     case "fitContent":
-      nodes.forEach((n) => setNodeSize(n, fitSize(n)));
+      expanded.forEach((n) => setNodeSize(n, fitSize(n)));
       break;
     default:
       return false;
@@ -682,15 +723,12 @@ export function fitGroupsToNodes(app, padding = 20) {
   for (const g of graphGroups(graph)) {
     const r = groupRect(g);
     const gTitle = Math.round((g.font_size ?? 24) * 1.4);
-    const inside = nodes.filter((n) => {
-      const cx = n.pos[0] + n.size[0] / 2, cy = n.pos[1] + n.size[1] / 2;
-      return cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h;
-    });
+    const inside = nodes.filter((n) => centerInside(n, r, titleH)).map((n) => nodeRect(n, titleH));
     if (!inside.length) continue;
-    const x0 = Math.min(...inside.map((n) => n.pos[0]));
-    const y0 = Math.min(...inside.map((n) => n.pos[1] - titleH));
-    const x1 = Math.max(...inside.map((n) => n.pos[0] + n.size[0]));
-    const y1 = Math.max(...inside.map((n) => n.pos[1] + n.size[1]));
+    const x0 = Math.min(...inside.map((b) => b.x));
+    const y0 = Math.min(...inside.map((b) => b.y));
+    const x1 = Math.max(...inside.map((b) => b.x + b.w));
+    const y1 = Math.max(...inside.map((b) => b.y + b.h));
     setGroupRect(g, { x: x0 - padding, y: y0 - padding - gTitle, w: x1 - x0 + padding * 2, h: y1 - y0 + padding * 2 + gTitle });
     count++;
   }

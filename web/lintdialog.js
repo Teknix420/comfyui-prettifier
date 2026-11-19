@@ -26,7 +26,7 @@ export function openLintReport(app) {
   const head = el("div", "pf-head");
   const counts = { error: 0, warning: 0, info: 0 };
   for (const f of findings) counts[f.severity]++;
-  head.append(el("h3", null, `Lint report: ${findings.length ? `${counts.error} errors, ${counts.warning} warnings, ${counts.info} notes` : "all clear"}`));
+  head.append(el("h3", null, `Lint Report: ${findings.length ? `${counts.error} errors, ${counts.warning} warnings, ${counts.info} notes` : "All Clear"}`));
   const x = el("button", "pf-x", "×");
   x.title = "Close";
   head.append(x);
@@ -57,7 +57,7 @@ export function openLintReport(app) {
     body.append(list);
   }
   const foot = el("div", "pf-foot");
-  const again = el("button", "pf-btn", "Check again");
+  const again = el("button", "pf-btn", "Check Again");
   again.addEventListener("click", () => openLintReport(app));
   const close = el("button", "pf-btn primary", "Close");
   foot.append(again, close);
