@@ -38,7 +38,7 @@ its own **Undo last prettify** command.
 
 ### The options dialog
 
-The dialog shows every option grouped in tabs. With **Live preview** on, the canvas
+The dialog shows every option grouped in tabs. With **Live Preview** on, the canvas
 re-arranges as you change things; **Apply** keeps the result and **Cancel** (or Esc)
 puts everything back. Presets (*Compact*, *Spacious*, *Presentation*, *Tidy only*)
 set several options at once. **Apply** saves the options as your defaults; **Cancel** discards them.
@@ -74,7 +74,10 @@ set several options at once. **Apply** saves the options as your defaults; **Can
   first) or near the output (vertical first), and rerouted links can be sent
   **above or below the whole workflow** instead of between the nodes. With the
   Straight link style every turn gets its own dot, so links leave and enter
-  nodes level. Prettifying the whole workflow clears every old dot first
+  nodes level. **Overlapping links** can be merged: links that take the same path
+  run on top of each other as one line instead of side by side, either only links
+  from the same output (they then share their dots until they branch) or all
+  links. Prettifying the whole workflow clears every old dot first
   (a selection only clears the dots of its own links), and running it again gives
   the same result.
 - **Variables instead of long links.** Optionally swap long links, or links that
@@ -150,7 +153,7 @@ connectors that would end up with the same label are numbered. Inside a subgraph
 | Sizing | Node width mode, fixed/min/max width, node height mode, shrink nodes with images or text |
 | Groups | Arrangement (follow the flow, compact, most compact), target shape, group by (auto, existing, stage, category, section, node type, node color, only my rules, none), custom group rules, groups not to create, name template, name find/replace, number duplicate names, restyle existing groups, minimum group size, category depth, padding, title size, color mode, single color |
 | Placement | Unconnected nodes, notes, separate sections, align ungrouped nodes with the group box or with the nodes inside groups, match grouped node width, never move pinned nodes |
-| Links | Reroute dots (auto, remove, keep), rerouted links take the shortest way or stay level, bends centered between columns or next to the node, direction preference (horizontal or vertical first), send rerouted links above or below the workflow, route around groups, clearance, minimum link length, replace links with variables (long, blocked, both), length that counts as long, variable name template, collapse variable nodes |
+| Links | Reroute dots (auto, remove, keep), rerouted links take the shortest way or stay level, bends centered between columns or next to the node, direction preference (horizontal or vertical first), send rerouted links above or below the workflow, overlapping links side by side or merged (by output, or all), route around groups, clearance, minimum link length, replace links with variables (long, blocked, both), length that counts as long, variable name template, collapse variable nodes |
 | Nodes | Collapse mode and pattern, muted/bypassed style, subgraphs, subgraph connector order |
 | Renaming | Rename on prettify, title mode/template/criteria/type filter/capitalization/numbering/rules, connector mode/template/sides/only connected/widget inputs/capitalization/rules, subgraph connector mode/template |
 | Notes | Summary note on/off, type, title, include prompts |
@@ -176,7 +179,7 @@ Custom group rules look like `Name = pattern`, separated by `;`, with an optiona
 color after the name: `Loaders #3f789e = Loader|Checkpoint; Prompts = TextEncode`.
 The pattern is a regular expression matched against a node's type, title, category
 and pipeline stage. Rules are checked first and in order; nodes no rule claims
-follow "Create groups by" (choose "Only my custom rules" to leave them ungrouped).
+follow "Create Groups By" (choose "Only My Custom Rules" to leave them ungrouped).
 A rule's color wins over the group color mode.
 
 Group names can be shaped with a template (`{name}`, `{count}`, `{n}`, `{stage}`,

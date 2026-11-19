@@ -189,6 +189,7 @@ function levelRoute(sx, sy, tx, ty, others, gap, margin, lane, mid, seg = (ax, a
  * o.rerouteTurn "horizontal" | "vertical": long links with ends at different heights turn once,
  *   near the input or near the output. o.linkOrthogonal: links are drawn with right angles.
  * o.rerouteLane "above" | "below": rerouted links run in lanes outside the whole workflow.
+ * o.rerouteMerge "output" | "all": links may run on top of each other instead of side by side.
  * o.clearAll (whole workflow) removes every dot first, not only those of these links.
  */
 export function cleanReroutes(graph, nodes, o) {
@@ -233,14 +234,26 @@ export function cleanReroutes(graph, nodes, o) {
     }
   }
   const margin = Math.max(4, o.rerouteClearance ?? 16);
-  const lanes = new Map(); // rounded y -> uses
-  const lane = (y) => {
-    const key = Math.round(y / 8);
-    const uses = lanes.get(key) || 0;
-    lanes.set(key, uses + 1);
-    return uses;
+  // Links that want the same lane (or the same bend) normally sit side by side.
+  // o.rerouteMerge "output" lets links from one output run on top of each other,
+  // "all" lets every link do so. `owner` is the link being routed.
+  const merge = o.rerouteMerge === "all" || o.rerouteMerge === "output" ? o.rerouteMerge : "off";
+  let owner = null;
+  const place = (map, key, take) => {
+    let list = map.get(key);
+    if (!list) {
+      if (!take) return 0;
+      map.set(key, (list = []));
+    }
+    const who = merge === "all" ? "*" : merge === "output" ? owner : null;
+    const at = who == null ? -1 : list.indexOf(who);
+    if (at >= 0) return at;
+    if (take) list.push(who);
+    return take ? list.length - 1 : list.length;
   };
-  lane.peek = (y) => lanes.get(Math.round(y / 8)) || 0;
+  const lanes = new Map(); // rounded y -> who runs there
+  const lane = (y) => place(lanes, Math.round(y / 8), true);
+  lane.peek = (y) => place(lanes, Math.round(y / 8), false);
 
   // With right-angle ("straight") links ComfyUI draws a link between two points at
   // different heights as level, a vertical step half-way, level. Test that path.
@@ -254,11 +267,36 @@ export function cleanReroutes(graph, nodes, o) {
     for (let i = 0; i + 1 < pts.length; i++) if (list.some((b) => seg(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1], b))) return false;
     return true;
   };
+  // Merged links from one output use the very same dots for as long as their paths
+  // agree (a trunk), then branch, like a link dragged off a dot by hand.
+  const trunks = new Map(); // output -> [[{ pos, dot }]]
+  const same = (a, b) => Math.abs(a[0] - b[0]) < 0.5 && Math.abs(a[1] - b[1]) < 0.5;
   const addDots = (link, pts) => {
+    let shared = [];
+    if (merge !== "off" && link.parentId == null) {
+      for (const chain of trunks.get(owner) ?? []) {
+        let n = 0;
+        while (n < chain.length && n < pts.length && same(chain[n].pos, pts[n])) n++;
+        if (n > shared.length) shared = chain.slice(0, n);
+      }
+      if (shared.some((c) => !(c.dot?.linkIds instanceof Set) || !graph.reroutes.has?.(c.dot.id))) shared = [];
+    }
+    if (shared.length) {
+      for (const c of shared) c.dot.linkIds.add(link.id);
+      link.parentId = shared[shared.length - 1].dot.id;
+    }
     // createReroute inserts before the given segment, so go from the far end.
+    const made = [];
     let before = link;
-    for (let i = pts.length - 1; i >= 0; i--) before = graph.createReroute(pts[i], before);
-    res.added += pts.length;
+    for (let i = pts.length - 1; i >= shared.length; i--) {
+      before = graph.createReroute(pts[i], before);
+      made.unshift({ pos: pts[i], dot: before });
+    }
+    res.added += made.length;
+    if (merge !== "off") {
+      if (!trunks.has(owner)) trunks.set(owner, []);
+      trunks.get(owner).push([...shared, ...made]);
+    }
   };
   const turnPref = o.rerouteTurn === "horizontal" || o.rerouteTurn === "vertical" ? o.rerouteTurn : null;
 
@@ -273,7 +311,7 @@ export function cleanReroutes(graph, nodes, o) {
     outer = {
       y: (n) => (up ? top - margin - 10 - n * 12 : bottom + margin + 10 + n * 12),
       lane(link) {
-        const key = link.origin_id + ":" + link.origin_slot;
+        const key = merge === "all" ? "*" : link.origin_id + ":" + link.origin_slot;
         if (!laneOf.has(key)) laneOf.set(key, laneOf.size);
         return laneOf.get(key);
       },
@@ -284,9 +322,7 @@ export function cleanReroutes(graph, nodes, o) {
   // right next to the node they go around. Several bends in one gap fan out.
   const used = new Map();
   const spread = (c, [lo, hi]) => {
-    const key = Math.round(c / 4);
-    const n = used.get(key) || 0;
-    used.set(key, n + 1);
+    const n = place(used, Math.round(c / 4), true);
     const off = n ? Math.ceil(n / 2) * 10 * (n % 2 ? 1 : -1) : 0;
     return Math.min(Math.max(hi - 8, c), Math.max(Math.min(lo + 8, c), c + off));
   };
@@ -311,6 +347,7 @@ export function cleanReroutes(graph, nodes, o) {
   links.sort((a, b) => a.origin_id - b.origin_id || a.origin_slot - b.origin_slot || a.target_id - b.target_id);
   for (const link of links) {
     const src = inScope.get(link.origin_id), dst = inScope.get(link.target_id);
+    owner = link.origin_id + ":" + link.origin_slot;
     const [sx, sy] = slotPos(src, false, link.origin_slot);
     const [tx, ty] = slotPos(dst, true, link.target_slot);
     const foreign = groupBoxes.filter((g) => !g.members.has(src) && !g.members.has(dst));
