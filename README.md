@@ -256,12 +256,12 @@ workflow runs it first and stops if it finds anything.
   before sharing it with someone who does not have it). A variable is only
   visible inside the graph or subgraph it is in.
 - New groups are a single level: Prettifier does not create groups inside groups.
-- Nested groups: nodes are laid out by their innermost group; outer groups are
-  refit around their contents afterwards and may overlap neighbours.
-- A pinned node inside a group stays put while the rest of its group is laid out,
-  so the group is stretched to reach it.
-- Now and then a second prettify finds a slightly different arrangement than the
-  first (the starting order of the nodes is one of its inputs).
+- Nested groups are kept as they are (inner groups are laid out inside their
+  outer group), but a group that only partly overlaps another one is treated as
+  a separate group.
+- A pinned node stays put while the rest of its group is laid out, and the group
+  is fitted around the nodes that were laid out. The layout does not steer
+  around pinned nodes, so one can end up under other nodes or outside its group.
 - Inside a subgraph, the open subgraph is what gets prettified.
 - Subgraph connector order follows one side at a time: matching the inside can
   add crossings outside and the other way round. With several copies of the same
