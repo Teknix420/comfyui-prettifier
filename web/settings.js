@@ -125,6 +125,11 @@ export const OPTIONS = [
     opt("above", "Above the Whole Workflow"),
     opt("below", "Below the Whole Workflow"),
   ], "Above or below: every link that has to be rerouted runs in its own lane outside all nodes and groups, instead of weaving between them. Links from the same output share a lane."),
+  combo("rerouteMerge", "Links", "Overlapping Links", [
+    opt("off", "Keep Links Side by Side"),
+    opt("output", "Merge Links From the Same Output"),
+    opt("all", "Merge All Links on the Same Path"),
+  ], "Rerouted links that take the same path normally run next to each other, each in its own lane. Merging lets them run on top of each other as one line. Links from the same output then share their dots until they branch."),
   combo("rerouteBend", "Links", "Where Rerouted Links Bend", [
     opt("center", "Centered Between Columns"),
     opt("near", "Next to the Node They Go Around"),
@@ -247,6 +252,7 @@ export const EXTRA_DEFAULTS = {
   rerouteBend: "center",
   rerouteTurn: "auto",
   rerouteLane: "auto",
+  rerouteMerge: "off",
   rerouteAvoidGroups: true,
   rerouteClearance: 16,
   rerouteMinLength: 300,
