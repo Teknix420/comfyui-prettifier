@@ -1,0 +1,95 @@
+// Existing groups keep their collapsed (minimized) nodes. A collapsed node is drawn
+// as its title bar only, while node.size still holds the expanded size.
+import assert from "node:assert/strict";
+import { readModel, prettifyNodes, nodeRect, fitGroupsToNodes, groupRect } from "../web/graph.js";
+
+const TH = 30; // LiteGraph.NODE_TITLE_HEIGHT fallback
+let linkId = 0;
+
+const node = (id, title, x, y, w, h, nIn = 1, nOut = 1) => ({
+  id, title, type: title, pos: [x, y], size: [w, h], flags: {},
+  inputs: Array.from({ length: nIn }, () => ({ name: "in", type: "X", link: null })),
+  outputs: Array.from({ length: nOut }, () => ({ name: "out", type: "X", links: [] })),
+});
+const group = (title, x, y, w, h) => ({ title, _bounding: [x, y, w, h], font_size: 24, color: "#335" });
+
+function build() {
+  // Group "Loaders": an expanded node on top and a collapsed one at the bottom edge.
+  // The collapsed node's expanded size (300 tall) reaches far below the group and
+  // into the group underneath it.
+  const a = node(1, "Load", 40, 100, 220, 120, 0);
+  const b = node(2, "Minimized", 40, 300, 220, 300);
+  b.flags.collapsed = true;
+  b._collapsed_width = 140;
+  // Group "Sampling" to the right; group "Below" directly under "Loaders".
+  const c = node(3, "Sample", 500, 100, 240, 200);
+  const d = node(4, "Lower", 40, 520, 220, 120, 1, 0);
+  const nodes = [a, b, c, d];
+  const links = new Map();
+  const link = (from, to) => {
+    const l = { id: ++linkId, origin_id: from.id, origin_slot: 0, target_id: to.id, target_slot: 0 };
+    links.set(l.id, l);
+    from.outputs[0].links.push(l.id);
+    to.inputs[0].link = l.id;
+  };
+  link(a, b);
+  link(b, c);
+  link(c, d);
+  const groups = [
+    group("Loaders", 20, 20, 260, 300), // y 20..320; the collapsed title bar is at 270..300
+    group("Sampling", 480, 20, 280, 300),
+    group("Below", 20, 440, 260, 220), // y 440..660; node 2's expanded center (y 435..) is near here
+  ];
+  const graph = { _nodes: nodes, _groups: groups, links, remove(g) { groups.splice(groups.indexOf(g), 1); } };
+  return { graph, nodes, groups, a, b, c, d };
+}
+
+const inside = (n, g) => {
+  const b = nodeRect(n, TH), r = groupRect(g);
+  return b.x >= r.x && b.y >= r.y && b.x + b.w <= r.x + r.w && b.y + b.h <= r.y + r.h;
+};
+
+// 1. The model puts the collapsed node in the group it is drawn in.
+{
+  const { graph, nodes } = build();
+  const m = readModel(graph, nodes);
+  const byId = new Map(m.nodes.map((n) => [n.id, n]));
+  assert.deepEqual(byId.get(1).groups, [0]);
+  assert.deepEqual(byId.get(2).groups, [0], "collapsed node belongs to the group around its title bar");
+  assert.deepEqual(byId.get(4).groups, [2]);
+}
+
+// 2. A collapsed node whose expanded body would reach into another group stays out of that group.
+{
+  const { graph, nodes, b } = build();
+  b.pos[1] = 380; // title bar 350..380, between the groups; expanded center at y 515 is inside "Below"
+  const m = readModel(graph, nodes);
+  assert.deepEqual(m.nodes.find((n) => n.id === 2).groups, [], "a collapsed node between groups is in neither");
+}
+
+// 3. After a prettify every group still holds the same nodes, in every link style.
+const app = {};
+for (const extra of [{}, { linkOrthogonal: true, hGap: 40, vGap: 20 }, { groupBy: "existing" }, { widthMode: "fit", heightMode: "fit" }]) {
+  const { graph, nodes, groups, a, b, c, d } = build();
+  prettifyNodes(app, graph, nodes, { noHistory: true, ...extra });
+  const label = JSON.stringify(extra);
+  assert.equal(groups.length, 3, `groups kept ${label}`);
+  assert.ok(inside(a, groups[0]), `expanded node stays in Loaders ${label}`);
+  assert.ok(inside(b, groups[0]), `collapsed node stays in Loaders ${label}`);
+  assert.ok(inside(c, groups[1]), `Sampling keeps its node ${label}`);
+  assert.ok(inside(d, groups[2]), `Below keeps its node ${label}`);
+  assert.ok(!inside(b, groups[2]), `collapsed node is not pulled into Below ${label}`);
+  assert.ok(b.flags.collapsed, "still collapsed");
+  assert.deepEqual(b.size, [220, 300], "expanded size untouched");
+}
+
+// 4. "Fit groups to nodes" wraps the title bar of a collapsed node, not its expanded size.
+{
+  const { graph, groups, b } = build();
+  fitGroupsToNodes({ graph }, 20);
+  const r = groupRect(groups[0]);
+  assert.ok(inside(b, groups[0]));
+  assert.equal(r.y + r.h, b.pos[1] + 20, "group ends one padding below the collapsed title bar");
+}
+
+console.log("All group checks passed");

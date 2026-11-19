@@ -103,6 +103,23 @@ function collapsedWidth(n) {
   return Math.max(n._collapsed_width ?? 0, est) || 120;
 }
 
+/**
+ * The rectangle a node covers on the canvas, title bar included. A collapsed node
+ * is only its title bar: node.size still holds the expanded size, so using it
+ * would place the node far below (and right of) where it is actually drawn.
+ */
+export function nodeRect(n, titleH = titleHeight(), pos = n.pos) {
+  if (n.flags?.collapsed) return { x: pos[0], y: pos[1] - titleH, w: collapsedWidth(n), h: titleH };
+  return { x: pos[0], y: pos[1] - titleH, w: n.size?.[0] ?? 0, h: (n.size?.[1] ?? 0) + titleH };
+}
+
+/** Whether the center of the node, as drawn, lies inside the rectangle. */
+function centerInside(n, r, titleH, pos) {
+  const b = nodeRect(n, titleH, pos);
+  const cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+  return cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h;
+}
+
 function fitSize(node) {
   try {
     const s = node.computeSize?.();
@@ -137,14 +154,12 @@ export function readModel(graph, nodes) {
   const inScope = new Set(nodes.map((n) => n.id));
   const groups = graphGroups(graph);
 
-  // Group membership: a node belongs to a group if its center is inside it.
+  // Group membership: a node belongs to a group if its center, as drawn, is inside it.
   const groupInfo = groups.map((g, index) => ({ g, index, ...groupRect(g) }));
   const membership = new Map();
   for (const n of graphNodes(graph)) {
-    const cx = n.pos[0] + n.size[0] / 2;
-    const cy = n.pos[1] + n.size[1] / 2 - titleH / 2;
     const containing = groupInfo
-      .filter((g) => cx >= g.x && cx <= g.x + g.w && cy >= g.y && cy <= g.y + g.h)
+      .filter((g) => centerInside(n, g, titleH))
       .sort((a, b) => a.w * a.h - b.w * b.h)
       .map((g) => g.index);
     membership.set(n.id, containing);
@@ -316,9 +331,8 @@ export function renameNodes(graph, nodes, opts) {
   const titleH = titleHeight();
   const groups = graphGroups(graph).map((g) => ({ g, ...groupRect(g) }));
   const model = nodes.map((n) => {
-    const cx = n.pos[0] + n.size[0] / 2, cy = n.pos[1] + n.size[1] / 2 - titleH / 2;
     const group = groups
-      .filter((g) => cx >= g.x && cx <= g.x + g.w && cy >= g.y && cy <= g.y + g.h)
+      .filter((g) => centerInside(n, g, titleH))
       .sort((a, b) => a.w * a.h - b.w * b.h)[0];
     const widgets = {};
     for (const w of n.widgets || []) if (w?.name && (typeof w.value === "string" || typeof w.value === "number")) widgets[w.name] = w.value;
@@ -490,10 +504,9 @@ export function prettifyNodes(app, graph, nodes, opts) {
       .filter((r) => r.moved && byId.has(r.id))
       .map((r) => {
         const n = byId.get(r.id), i = info.get(r.id) ?? {};
-        const [x, y] = target.get(r.id) ?? n.pos;
-        const cx = x + (n.size?.[0] ?? 0) / 2, cy = y + (n.flags?.collapsed ? 0 : (n.size?.[1] ?? 0) / 2);
+        const at = target.get(r.id) ?? n.pos;
         // The innermost group that holds the node.
-        const holder = rects.filter((g) => cx >= g.x && cx <= g.x + g.w && cy >= g.y && cy <= g.y + g.h).sort((a, b) => a.w * a.h - b.w * b.h)[0];
+        const holder = rects.filter((g) => centerInside(n, g, model.titleH, at)).sort((a, b) => a.w * a.h - b.w * b.h)[0];
         return { id: r.id, type: i.type ?? n.type, title: n.title, category: i.category, stage: r.stage, groupColor: holder?.color };
       });
     const palette = opts.paletteColors ?? { group: STAGE_GROUP_COLORS, node: STAGE_NODE_COLORS };
@@ -682,15 +695,12 @@ export function fitGroupsToNodes(app, padding = 20) {
   for (const g of graphGroups(graph)) {
     const r = groupRect(g);
     const gTitle = Math.round((g.font_size ?? 24) * 1.4);
-    const inside = nodes.filter((n) => {
-      const cx = n.pos[0] + n.size[0] / 2, cy = n.pos[1] + n.size[1] / 2;
-      return cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h;
-    });
+    const inside = nodes.filter((n) => centerInside(n, r, titleH)).map((n) => nodeRect(n, titleH));
     if (!inside.length) continue;
-    const x0 = Math.min(...inside.map((n) => n.pos[0]));
-    const y0 = Math.min(...inside.map((n) => n.pos[1] - titleH));
-    const x1 = Math.max(...inside.map((n) => n.pos[0] + n.size[0]));
-    const y1 = Math.max(...inside.map((n) => n.pos[1] + n.size[1]));
+    const x0 = Math.min(...inside.map((b) => b.x));
+    const y0 = Math.min(...inside.map((b) => b.y));
+    const x1 = Math.max(...inside.map((b) => b.x + b.w));
+    const y1 = Math.max(...inside.map((b) => b.y + b.h));
     setGroupRect(g, { x: x0 - padding, y: y0 - padding - gTitle, w: x1 - x0 + padding * 2, h: y1 - y0 + padding * 2 + gTitle });
     count++;
   }

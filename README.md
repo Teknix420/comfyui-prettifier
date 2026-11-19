@@ -231,6 +231,7 @@ node tests/test_reroutes.mjs
 node tests/test_subgraphs.mjs
 node tests/test_variables.mjs
 node tests/test_colors.mjs
+node tests/test_groups.mjs          # collapsed nodes stay in their groups
 ```
 
 Before a release, `python3 .github/scripts/registry_scan.py` checks the files that
