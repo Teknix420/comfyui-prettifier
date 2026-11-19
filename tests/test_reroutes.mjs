@@ -272,6 +272,80 @@ const levelLength = (path) => {
   }
 }
 
+// --- merging: links may run on top of each other ------------------------------------
+{
+  // A graph whose dots work like LiteGraph's: a dot knows its parent and its links,
+  // and a link points at its last dot.
+  const real = (nodes, links) => {
+    let nextId = 1;
+    return {
+      _nodes: nodes,
+      _groups: [],
+      links: new Map(links.map((l, i) => [i + 1, { id: i + 1, origin_id: l[0], origin_slot: 0, target_id: l[1], target_slot: 0 }])),
+      reroutes: new Map(),
+      removeReroute(id) {
+        this.reroutes.delete(id);
+      },
+      createReroute(pos, before) {
+        const r = { id: nextId++, pos, parentId: before.parentId, linkIds: new Set(before.linkIds ?? [before.id]) };
+        before.parentId = r.id;
+        this.reroutes.set(r.id, r);
+        return r;
+      },
+    };
+  };
+  const dotsOf = (g, id) => {
+    const out = [];
+    for (let at = g.links.get(id).parentId; at != null; at = g.reroutes.get(at).parentId) out.unshift(g.reroutes.get(at));
+    return out;
+  };
+  const key = (r) => r.pos.join(",");
+
+  // One output feeds two far inputs past a node that is in the way of both.
+  const build = () => {
+    const A = node(1, 0, 0), C = node(3, 500, -20, 300, 140), B = node(2, 1400, 0, 200, 60), B2 = node(4, 1400, 100, 200, 60);
+    return real([A, C, B, B2], [[1, 2], [1, 4]]);
+  };
+  const run = (mergeMode, extra = {}) => {
+    const g = build();
+    const r = cleanReroutes(g, g._nodes, { ...base, rerouteMinLength: 0, linkOrthogonal: true, rerouteMerge: mergeMode, ...extra });
+    return { g, r, a: dotsOf(g, 1), b: dotsOf(g, 2) };
+  };
+  const off = run("off"), out = run("output");
+  check("merge off: every link has its own dots", off.a.length > 0 && off.b.length > 0 && !off.a.some((r) => off.b.includes(r)), JSON.stringify(off.r));
+  check("merge off: the links sit side by side", off.a[1].pos[1] !== off.b[1].pos[1], JSON.stringify([off.a.map(key), off.b.map(key)]));
+  const common = out.a.filter((r) => out.b.includes(r));
+  check("merge by output: the links share their first dots", common.length > 0 && common[0] === out.a[0] && common[0] === out.b[0], JSON.stringify([out.a.map(key), out.b.map(key)]));
+  check("merge by output: a shared dot lists both links", common.every((r) => r.linkIds.has(1) && r.linkIds.has(2)));
+  check("merge by output: fewer dots than side by side", out.r.added < off.r.added && out.g.reroutes.size === out.r.added, JSON.stringify([off.r, out.r]));
+  check("merge by output: each link still ends at its own dot", out.a[out.a.length - 1] !== out.b[out.b.length - 1]);
+  check("merge by output: no two dots on the same spot", new Set([...out.g.reroutes.values()].map(key)).size === out.g.reroutes.size);
+
+  // Two different outputs going around the same node.
+  const two = (mergeMode) => {
+    const A = node(1, 0, 0), A2 = node(5, 0, 20, 200, 60), B = node(2, 1400, 0), B2 = node(6, 1400, 20, 200, 60);
+    const C = node(3, 500, -20, 300, 140);
+    const g = real([A, A2, B, B2, C], [[1, 2], [5, 6]]);
+    cleanReroutes(g, g._nodes, { ...base, rerouteMinLength: 0, rerouteMerge: mergeMode });
+    return [dotsOf(g, 1), dotsOf(g, 2)];
+  };
+  const laneY = ([a, b]) => [a[0].pos[1], b[0].pos[1]];
+  const [y0, y1] = laneY(two("off")), [o0, o1] = laneY(two("output")), [m0, m1] = laneY(two("all"));
+  check("different outputs: side by side unless everything merges", y0 !== y1 && o0 !== o1 && m0 === m1, JSON.stringify([y0, y1, o0, o1, m0, m1]));
+  const [ta, tb] = two("all");
+  check("merge all: different outputs never share a dot", !ta.some((r) => tb.includes(r)));
+
+  // Lanes outside the workflow: one lane for everything.
+  const outerY = (mergeMode) => {
+    const A = node(1, 0, 0), A2 = node(5, 0, 200), B = node(2, 1400, 0), B2 = node(6, 1400, 200), C = node(3, 600, -20, 200, 400);
+    const g = real([A, A2, B, B2, C], [[1, 2], [5, 6]]);
+    cleanReroutes(g, g._nodes, { ...base, rerouteLane: "above", rerouteMerge: mergeMode });
+    return [dotsOf(g, 1)[0].pos[1], dotsOf(g, 2)[0].pos[1]];
+  };
+  const [u0, u1] = outerY("output"), [v0, v1] = outerY("all");
+  check("lane above: one lane per output, or one for all", u0 !== u1 && v0 === v1, JSON.stringify([u0, u1, v0, v1]));
+}
+
 // --- a narrow (collapsed) node in a column of wider ones -----------------------------
 {
   // S is collapsed and narrower than the nodes above and below it in its column, so
