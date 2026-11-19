@@ -216,7 +216,7 @@ export function prettify(app, { scope, overrides, animate, recordUndo = true, qu
     }
   } catch (err) {
     console.error("[Prettifier] failed", err);
-    toast(app, "error", "Prettifier failed", String(err?.message ?? err));
+    toast(app, "error", "Prettifier Failed", String(err?.message ?? err));
     if (recordUndo && lastSnapshot) restoreAll(lastSnapshot);
     return null;
   } finally {
@@ -236,7 +236,7 @@ export function prettify(app, { scope, overrides, animate, recordUndo = true, qu
     if (stats.variables) parts.push(`${stats.variables} link${stats.variables === 1 ? "" : "s"} replaced by variables`);
     if (stats.subgraphs) parts.push(`${stats.subgraphs} subgraph${stats.subgraphs === 1 ? "" : "s"}`);
     if (issues?.length) parts.push(`${issues.length} lint finding${issues.length === 1 ? "" : "s"} (run "Lint workflow")`);
-    toast(app, "success", "Workflow prettified", parts.join(", ") + ".");
+    toast(app, "success", "Workflow Prettified", parts.join(", ") + ".");
   }
   return stats;
 }
@@ -335,7 +335,7 @@ export function summaryNote(app) {
   }
   notifyChanged(app, graph);
   app.canvas?.setDirty?.(true, true);
-  if (o.showToast) toast(app, "success", "Summary note", r.created ? "Created." : "Updated.");
+  if (o.showToast) toast(app, "success", "Summary Note", r.created ? "Created." : "Updated.");
   return r.note;
 }
 

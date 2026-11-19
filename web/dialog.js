@@ -91,7 +91,7 @@ export function openDialog(app) {
   overlay.append(dialog);
 
   // Header (draggable)
-  const head = el("div", { class: "pf-head" }, el("h3", {}, "✨ Prettify workflow"), el("button", { class: "pf-x", title: "Close", onclick: () => cancel() }, "×"));
+  const head = el("div", { class: "pf-head" }, el("h3", {}, "✨ Prettify Workflow"), el("button", { class: "pf-x", title: "Close", onclick: () => cancel() }, "×"));
   dialog.append(head);
   let drag = null;
   head.addEventListener("pointerdown", (e) => {
@@ -125,9 +125,9 @@ export function openDialog(app) {
   const presetSel = el("select", { title: "Pick a preset or one of your saved themes, then press Load" });
   const fillPresets = (keep = presetSel.value) => {
     presetSel.replaceChildren(
-      el("option", { value: "" }, "Preset / theme…"),
+      el("option", { value: "" }, "Preset / Theme…"),
       el("optgroup", { label: "Presets" }, ...Object.keys(PRESETS).map((p) => el("option", { value: "p:" + p }, p))),
-      ...(Object.keys(themes).length ? [el("optgroup", { label: "My themes" }, ...Object.keys(themes).map((t) => el("option", { value: "t:" + t }, t)))] : [])
+      ...(Object.keys(themes).length ? [el("optgroup", { label: "My Themes" }, ...Object.keys(themes).map((t) => el("option", { value: "t:" + t }, t)))] : [])
     );
     // Keep the choice shown; fall back to the placeholder when it no longer exists.
     presetSel.value = keep;
@@ -150,7 +150,7 @@ export function openDialog(app) {
   });
 
   // Theme tools: save current options under a name, export, import, delete.
-  const themeName = el("input", { type: "text", placeholder: "Theme name", style: "width:110px" });
+  const themeName = el("input", { type: "text", placeholder: "Theme Name", style: "width:110px" });
   // The name typed in the box, or else the theme picked in the list.
   const pickedTheme = () => themeName.value.trim() || (presetSel.value.startsWith("t:") ? presetSel.value.slice(2) : "");
   const diffFromDefaults = () => {
@@ -170,7 +170,7 @@ export function openDialog(app) {
       await saveThemes(app, themes);
       themeName.value = name;
       fillPresets("t:" + name);
-      toast(app, "success", updated ? "Theme updated" : "Theme saved", name);
+      toast(app, "success", updated ? "Theme Updated" : "Theme Saved", name);
     } }, "Save"),
     el("button", { class: "pf-btn sm", title: "Delete the theme with this name", onclick: async () => {
       const name = pickedTheme();
@@ -180,7 +180,7 @@ export function openDialog(app) {
       await saveThemes(app, themes);
       themeName.value = "";
       fillPresets();
-      toast(app, "info", "Theme deleted", name);
+      toast(app, "info", "Theme Deleted", name);
     } }, "Delete"),
     el("span", { class: "pf-spacer" }),
     el("button", { class: "pf-btn sm", title: "Download the current options as a theme file", onclick: () => exportTheme(pickedTheme() || "prettifier-theme", diffFromDefaults()) }, "Export"),
@@ -194,7 +194,7 @@ export function openDialog(app) {
       await applyValues({ ...ALL_DEFAULTS, ...t.options });
     } }, "Import")
   );
-  const scopeSel = el("select", { title: "What to rearrange" }, el("option", { value: "auto" }, "Auto scope"), el("option", { value: "all" }, "Whole workflow"), el("option", { value: "selection" }, "Selection only"));
+  const scopeSel = el("select", { title: "What to rearrange" }, el("option", { value: "auto" }, "Auto Scope"), el("option", { value: "all" }, "Whole Workflow"), el("option", { value: "selection" }, "Selection Only"));
   scopeSel.value = scope;
   scopeSel.addEventListener("change", () => {
     scope = scopeSel.value;
@@ -207,7 +207,7 @@ export function openDialog(app) {
     if (live) schedulePreview();
     else revert();
   });
-  dialog.append(el("div", { class: "pf-bar" }, presetSel, applyPickedBtn, scopeSel, el("span", { class: "pf-spacer" }), el("label", { class: "pf-check", title: "Re-arrange the canvas as you change options" }, liveBox, "Live preview")), themeBar);
+  dialog.append(el("div", { class: "pf-bar" }, presetSel, applyPickedBtn, scopeSel, el("span", { class: "pf-spacer" }), el("label", { class: "pf-check", title: "Re-arrange the canvas as you change options" }, liveBox, "Live Preview")), themeBar);
 
   // Tabs + body
   const tabs = el("div", { class: "pf-tabs" });
@@ -269,7 +269,7 @@ export function openDialog(app) {
   };
 
   // Footer
-  const resetBtn = el("button", { class: "pf-btn", title: "Reset every option to its default" }, "Reset defaults");
+  const resetBtn = el("button", { class: "pf-btn", title: "Reset every option to its default" }, "Reset Defaults");
   resetBtn.addEventListener("click", () => {
     applyValues({ ...ALL_DEFAULTS });
   });
