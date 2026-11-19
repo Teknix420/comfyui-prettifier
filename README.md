@@ -38,7 +38,7 @@ its own **Undo last prettify** command.
 
 ### The options dialog
 
-The dialog shows every option grouped in tabs. With **Live preview** on, the canvas
+The dialog shows every option grouped in tabs. With **Live Preview** on, the canvas
 re-arranges as you change things; **Apply** keeps the result and **Cancel** (or Esc)
 puts everything back. Presets (*Compact*, *Spacious*, *Presentation*, *Tidy only*)
 set several options at once. **Apply** saves the options as your defaults; **Cancel** discards them.
@@ -176,7 +176,7 @@ Custom group rules look like `Name = pattern`, separated by `;`, with an optiona
 color after the name: `Loaders #3f789e = Loader|Checkpoint; Prompts = TextEncode`.
 The pattern is a regular expression matched against a node's type, title, category
 and pipeline stage. Rules are checked first and in order; nodes no rule claims
-follow "Create groups by" (choose "Only my custom rules" to leave them ungrouped).
+follow "Create Groups By" (choose "Only My Custom Rules" to leave them ungrouped).
 A rule's color wins over the group color mode.
 
 Group names can be shaped with a template (`{name}`, `{count}`, `{n}`, `{stage}`,
