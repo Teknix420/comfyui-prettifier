@@ -760,7 +760,9 @@ const safeRe = (src) => {
 };
 
 function clusterKeys(nodes, edges, model, o) {
-  const mode = o.groupBy === "auto" ? (model.groups?.length ? "existing" : "stage") : o.groupBy;
+  // Auto keeps the user's groups. A selection inside a bigger group counts as
+  // that too: it must not get new groups drawn inside the group it sits in.
+  const mode = o.groupBy === "auto" ? (model.groups?.length || model.partialGroups ? "existing" : "stage") : o.groupBy;
   const key = new Map();
   const titles = new Map();
   const colors = new Map();
@@ -914,6 +916,7 @@ export function computeLayout(model, userOpts = {}) {
   const o = { ...DEFAULTS, ...userOpts };
   const titleH = model.titleH ?? 30;
   const groupTitleH = Math.round(o.groupFontSize * 1.4);
+  const groupTitleDefault = groupTitleH;
   const nodes = model.nodes;
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const edges = model.edges.filter((e) => byId.has(e.from) && byId.has(e.to) && e.from !== e.to);
@@ -1001,6 +1004,11 @@ export function computeLayout(model, userOpts = {}) {
     if (!clusterMembers.has(k)) clusterMembers.set(k, []);
     clusterMembers.get(k).push(n);
   }
+  // An existing group keeps its own title size (unless it is restyled), so leave
+  // room for that title instead of the size new groups get.
+  const groupTitleOf = (g) => (o.groupRestyleExisting || !(g?.fontSize > 0) ? groupTitleH : Math.round(g.fontSize * 1.4));
+  const modelGroup = new Map((model.groups || []).map((g) => [g.index, g]));
+  const titleOf = (k) => (cl.mode === "existing" ? groupTitleOf(modelGroup.get(Number(String(k).slice(1)))) : groupTitleH);
   const inner = new Map(); // key -> {pos, width, w, h}
   const memberOf = new Map();
   for (const [k, mem] of clusterMembers) {
@@ -1022,7 +1030,7 @@ export function computeLayout(model, userOpts = {}) {
     const k = memberOf.get(id);
     if (k == null) return { x: 0, y: 0 };
     const p = inner.get(k).pos.get(id);
-    return { x: p.x + pad, y: p.y + pad + groupTitleH };
+    return { x: p.x + pad, y: p.y + pad + titleOf(k) };
   };
   // Ungrouped nodes can line up with the nodes inside groups instead of with the
   // group boxes: each one is given the same margin a group has around its nodes.
@@ -1049,7 +1057,7 @@ export function computeLayout(model, userOpts = {}) {
     superItems.push({
       id: "c:" + k,
       w: r.w + pad * 2,
-      h: r.h + pad * 2 + groupTitleH,
+      h: r.h + pad * 2 + titleOf(k),
       origX: Math.min(...its.map((i) => i.origX)),
       origY: Math.min(...its.map((i) => i.origY)),
       flex: false,
@@ -1107,10 +1115,20 @@ export function computeLayout(model, userOpts = {}) {
       if (!same.length) continue;
       const left = Math.min(...same.map((g) => g.x)), right = Math.max(...same.map((g) => g.x + g.w));
       const w = right - left - pad * 2;
-      if (w > b.w) {
-        b.x = left + pad;
-        b.w = w;
-      }
+      if (w <= b.w) continue;
+      // Only widen into free space: a row of loose nodes must not grow into each
+      // other, or into a group standing beside them.
+      const wide = { x: left + pad, y: b.y, w, h: b.h };
+      const hitsBox = (r) => wide.x < r.x + r.w && r.x < wide.x + wide.w && wide.y < r.y + r.h && r.y < wide.y + wide.h;
+      const blocked =
+        [...box].some(([id, r]) => id !== n.id && hitsBox(r)) ||
+        [...clusterMembers.keys()].some((k) => {
+          const sp = sup.pos.get("c:" + k), r = inner.get(k);
+          return hitsBox({ x: sp.x, y: sp.y, w: r.w + pad * 2, h: r.h + pad * 2 + titleOf(k) });
+        });
+      if (blocked) continue;
+      b.x = wide.x;
+      b.w = w;
     }
   }
 
@@ -1147,26 +1165,23 @@ export function computeLayout(model, userOpts = {}) {
 
   // 8. Translate to origin.
   if (box.size) {
-    // Top-left corner of everything that will be drawn: a grouped node counts with
-    // its group's margin, an ungrouped one does not. (Counting the margin for every
-    // node made the whole workflow creep down and right on each run.)
+    // Anchor on the nodes themselves: the top-most and left-most node edges stay
+    // where they were. Group boxes are left out on both sides, because they are
+    // snapped outward after the nodes, and anchoring on them moved the whole
+    // workflow up by one grid step on every run.
     let minX = Infinity, minY = Infinity;
-    for (const [id, b] of box) {
-      const grouped = memberOf.has(id);
-      minX = Math.min(minX, b.x - (grouped ? pad : 0));
-      minY = Math.min(minY, b.y - (grouped ? pad + groupTitleH : 0));
+    for (const b of box.values()) {
+      minX = Math.min(minX, b.x);
+      minY = Math.min(minY, b.y);
     }
     let tx = 0, ty = 0;
     if (o.origin === "keep") {
-      const movers = live;
-      tx = Math.min(...movers.map((n) => n.x));
-      ty = Math.min(...movers.map((n) => n.y - titleH));
-      if (model.groups?.length) {
-        for (const g of model.groups) {
-          tx = Math.min(tx, g.x);
-          ty = Math.min(ty, g.y);
-        }
-      }
+      tx = Math.min(...live.map((n) => n.x));
+      ty = Math.min(...live.map((n) => n.y - titleH));
+    } else if (memberOf.size) {
+      // At the canvas origin, leave room for a group's margin and title.
+      tx = pad;
+      ty = pad + groupTitleH;
     }
     // Anchor on the grid, so a repeat run rounds every node the same way.
     if (o.snapToGrid) {
@@ -1208,7 +1223,7 @@ export function computeLayout(model, userOpts = {}) {
 
   // 10. Groups.
   const finalBox = new Map(result.nodes.map((r) => [r.id, { x: r.x, y: r.y - titleH, w: r.w, h: r.h + titleH }]));
-  const rectAround = (ids, extra = []) => {
+  const rectAround = (ids, extra = [], groupTitleH = groupTitleDefault) => {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     for (const id of ids) {
       const b = finalBox.get(id);
@@ -1271,7 +1286,7 @@ export function computeLayout(model, userOpts = {}) {
       const children = order.filter(
         (c) => c !== gr && rects.has(c.index) && members.get(c.index).length < mem.length && members.get(c.index).every((id) => memSet.has(id))
       );
-      const r = rectAround(mem, children.map((c) => rects.get(c.index)));
+      const r = rectAround(mem, children.map((c) => rects.get(c.index)), groupTitleOf(gr));
       if (!r) continue;
       rects.set(gr.index, r);
       const upd = { index: gr.index, ...r };

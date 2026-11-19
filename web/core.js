@@ -343,12 +343,33 @@ export function hasUndo() {
   return !!lastSnapshot;
 }
 
+/**
+ * Does the snapshot still describe what is on the canvas? After another workflow
+ * is opened, or ComfyUI's own undo rebuilds the graph, its nodes are gone, and
+ * restoring it would swap the open workflow's groups for the old ones.
+ */
+export function snapshotIsCurrent(app, snap) {
+  const main = snap?.parts?.[0]?.main;
+  if (!main) return false;
+  const root = app.rootGraph ?? app.graph;
+  const live = new Set([root, activeGraph(app), ...allSubgraphs(app)]);
+  if (!live.has(main.graph)) return false;
+  if (!main.nodes.length) return true;
+  const now = new Set(graphNodes(main.graph));
+  return main.nodes.some((s) => now.has(s.node));
+}
+
 export function undoLast(app) {
   if (!lastSnapshot) {
     toast(app, "info", "Prettifier", "Nothing to undo.");
     return false;
   }
   cancelAnimation();
+  if (!snapshotIsCurrent(app, lastSnapshot)) {
+    lastSnapshot = null;
+    toast(app, "info", "Prettifier", "Nothing to undo here: the last prettify was on a workflow that is no longer open. Use Ctrl+Z instead.");
+    return false;
+  }
   restoreAll(lastSnapshot);
   notifyChanged(app, lastSnapshot.graph);
   lastSnapshot = null;

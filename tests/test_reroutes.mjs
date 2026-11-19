@@ -255,6 +255,49 @@ const levelLength = (path) => {
   check("forced lane leaves clear links alone", cleanReroutes(g3, g3._nodes, { ...base, rerouteLane: "above" }).added === 0);
 }
 
+// --- lanes shared by several links stay clear of what is next to them ---------------
+{
+  // Two links go around C. The second one's lane is moved over by 10 so the links do
+  // not overlap; that must not push it into D, which sits just beyond the first lane.
+  const A = node(1, 0, 0), A2 = node(5, 0, 20, 200, 60), B = node(2, 1400, 0), B2 = node(6, 1400, 20, 200, 60);
+  const C = node(3, 500, -20, 300, 140), D = node(4, 500, -220, 300, 150);
+  const all = [A, A2, B, B2, C, D];
+  const g = makeGraph(all, [[1, 2], [5, 6]], []);
+  cleanReroutes(g, all, { ...base, rerouteMinLength: 0 });
+  const boxOf = (n) => [n.pos[0], n.pos[1] - 30, n.size[0], n.size[1] + 30];
+  for (const [id, a, b] of [[1, A, B], [2, A2, B2]]) {
+    const path = pathOf(g, id, a, b);
+    check(`shared lane: link ${id} got dots`, path.length > 2, JSON.stringify(path));
+    for (const o of [C, D]) check(`shared lane: link ${id} stays out of node ${o.id}`, !crossesRect(path, boxOf(o)), JSON.stringify(path));
+  }
+}
+
+// --- a narrow (collapsed) node in a column of wider ones -----------------------------
+{
+  // S is collapsed and narrower than the nodes above and below it in its column, so
+  // its link starts in the middle of the column. The step to the lane has to happen
+  // in the gap beside the column, not through the neighbours.
+  const S = node(1, 0, 300, 220, 100), U = node(2, 0, 0, 220, 250), V = node(3, 0, 380, 220, 250);
+  S.flags.collapsed = true;
+  S._collapsed_width = 120;
+  S.size[0] = 120; // the fake path helper reads the output position from size
+  const W = node(4, 300, 100, 300, 400), T = node(5, 1000, 290, 200, 100);
+  const all = [S, U, V, W, T];
+  const g = makeGraph(all, [[1, 5]], []);
+  const r = cleanReroutes(g, all, { ...base, rerouteMinLength: 0, linkOrthogonal: true, rerouteBend: "center" });
+  const raw = pathOf(g, 1, S, T);
+  raw[0][1] = S.pos[1] - 15; // a collapsed node's output is on its title bar
+  // Draw it the way right-angle links are drawn.
+  const path = [raw[0]];
+  for (let i = 1; i < raw.length; i++) {
+    const a = raw[i - 1], b = raw[i];
+    if (a[0] !== b[0] && a[1] !== b[1]) path.push([(a[0] + b[0]) / 2, a[1]], [(a[0] + b[0]) / 2, b[1]]);
+    path.push(b);
+  }
+  check("narrow source: the link is rerouted", r.added >= 2, JSON.stringify(raw));
+  for (const o of [U, V, W]) check(`narrow source: clear of node ${o.id}`, !crossesRect(path, [o.pos[0], o.pos[1] - 30, o.size[0], o.size[1] + 30]), JSON.stringify(path));
+}
+
 if (failed) {
   console.error(`${failed} check(s) failed`);
   process.exit(1);

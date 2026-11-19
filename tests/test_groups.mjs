@@ -40,7 +40,7 @@ function build() {
     group("Sampling", 480, 20, 280, 300),
     group("Below", 20, 440, 260, 220), // y 440..660; node 2's expanded center (y 435..) is near here
   ];
-  const graph = { _nodes: nodes, _groups: groups, links, remove(g) { groups.splice(groups.indexOf(g), 1); } };
+  const graph = { _nodes: nodes, _groups: groups, links, remove(g) { groups.splice(groups.indexOf(g), 1); }, add(g) { groups.push(g); } };
   return { graph, nodes, groups, a, b, c, d };
 }
 
@@ -93,3 +93,58 @@ for (const extra of [{}, { linkOrthogonal: true, hGap: 40, vGap: 20 }, { groupBy
 }
 
 console.log("All group checks passed");
+
+// --- more group checks ------------------------------------------------------------
+import { alignNodes } from "../web/graph.js";
+globalThis.LiteGraph = { LGraphGroup: class { constructor(t) { this.title = t; this._bounding = [0, 0, 0, 0]; this.font_size = 24; } } };
+const state = (nodes, groups) => JSON.stringify([nodes.map((n) => [...n.pos, ...n.size]), groups.map(groupRect)]);
+
+// 5. Prettifying again changes nothing: the workflow must not drift on every run.
+for (const extra of [{}, { linkOrthogonal: true, hGap: 40, vGap: 20 }, { groupBy: "stage", minGroupSize: 1 }, { groupPadding: 21 }, { gridSize: 16 }, { snapToGrid: false }]) {
+  const { graph, nodes, groups } = build();
+  prettifyNodes(app, graph, nodes, { noHistory: true, ...extra });
+  const first = state(nodes, graph._groups);
+  for (let i = 0; i < 3; i++) prettifyNodes(app, graph, nodes, { noHistory: true, ...extra });
+  assert.equal(state(nodes, graph._groups), first, `a repeat run moves nothing ${JSON.stringify(extra)}`);
+}
+
+// 6. A group with a big title keeps its nodes below the title.
+{
+  const { graph, nodes, groups } = build();
+  groups[0].font_size = 60;
+  prettifyNodes(app, graph, nodes, { noHistory: true });
+  const r = groupRect(groups[0]);
+  for (const n of nodes.slice(0, 2)) assert.ok(nodeRect(n, TH).y >= r.y + Math.round(60 * 1.4), "node sits below a 60px group title");
+  assert.equal(groups[0].font_size, 60, "title size untouched");
+  // ... unless existing groups are restyled to the standard title size.
+  const again = build();
+  again.groups[0].font_size = 60;
+  prettifyNodes(app, again.graph, again.nodes, { noHistory: true, groupRestyleExisting: true });
+  assert.equal(again.groups[0].font_size, 24);
+}
+
+// 7. Auto: a selection inside a bigger group gets no new groups of its own.
+{
+  const { graph, a, b, c } = build();
+  const before = graph._groups.length;
+  prettifyNodes(app, graph, [a, c], { noHistory: true, isSelection: true });
+  assert.equal(graph._groups.length, before, "no stage groups are created for part of an existing group");
+  // With no groups anywhere, Auto still groups by stage.
+  const bare = build();
+  bare.graph._groups.length = 0;
+  prettifyNodes(app, bare.graph, bare.nodes, { noHistory: true, minGroupSize: 1 });
+  assert.ok(bare.graph._groups.length > 0, "auto groups by stage when the workflow has no groups");
+}
+
+// 8. Align tools use the drawn size of a collapsed node.
+{
+  const { a, b } = build(); // a: expanded 220x120 at y 100; b: collapsed (140 wide, title bar only) at y 300
+  const fake = { canvas: { selected_nodes: { 1: a, 2: b }, graph: { _nodes: [a, b], _groups: [] } } };
+  alignNodes(fake, "right");
+  assert.equal(b.pos[0] + nodeRect(b, TH).w, a.pos[0] + a.size[0], "align right: collapsed node's drawn edge lines up");
+  alignNodes(fake, "bottom");
+  assert.equal(b.pos[1], a.pos[1] + a.size[1], "align bottom: collapsed title bar ends at the bottom edge");
+  assert.deepEqual(b.size, [220, 300], "collapsed node keeps its expanded size");
+}
+
+console.log("All extra group checks passed");

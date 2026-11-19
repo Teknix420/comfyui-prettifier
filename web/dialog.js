@@ -2,7 +2,8 @@
 
 import { OPTIONS, SECTIONS, PRESETS, ALL_DEFAULTS, readOptions, setOption } from "./settings.js";
 import { activeGraph, cancelAnimation, changeTracker } from "./graph.js";
-import { prettify, effectiveOptions, snapshotAll, restoreAll, toast } from "./core.js";
+import { prettify, effectiveOptions, snapshotAll, restoreAll, toast, applyDisplay } from "./core.js";
+import { snapshotLinkColors, restoreLinkColors } from "./display.js";
 import { loadThemes, saveThemes, exportTheme, importTheme } from "./themes.js";
 
 const STYLE_ID = "prettifier-dialog-style";
@@ -65,6 +66,9 @@ export function openDialog(app) {
   // Keep previews out of the undo history; one entry is recorded when the dialog closes.
   const tracker = changeTracker(app);
   tracker?.beforeChange?.();
+  // Previews also change how links are drawn; Cancel puts that back as well.
+  const linkMode = app.canvas?.links_render_mode;
+  const linkColors = snapshotLinkColors(app);
   let snapshot = null; // taken on first preview
   let live = true;
   let scope = values.scope;
@@ -118,25 +122,37 @@ export function openDialog(app) {
     schedulePreview();
   };
   let themes = loadThemes(app);
-  const presetSel = el("select", { title: "Load a preset or one of your saved themes" });
-  const fillPresets = () => {
+  const presetSel = el("select", { title: "Pick a preset or one of your saved themes, then press Load" });
+  const fillPresets = (keep = presetSel.value) => {
     presetSel.replaceChildren(
       el("option", { value: "" }, "Preset / theme…"),
       el("optgroup", { label: "Presets" }, ...Object.keys(PRESETS).map((p) => el("option", { value: "p:" + p }, p))),
       ...(Object.keys(themes).length ? [el("optgroup", { label: "My themes" }, ...Object.keys(themes).map((t) => el("option", { value: "t:" + t }, t)))] : [])
     );
+    // Keep the choice shown; fall back to the placeholder when it no longer exists.
+    presetSel.value = keep;
+    if (presetSel.value !== keep) presetSel.value = "";
   };
-  fillPresets();
-  presetSel.addEventListener("change", async () => {
+  fillPresets("");
+  // Picking a preset or theme only selects it. Load applies it, so a theme can be
+  // picked and saved over with the options as they are now.
+  const applyPicked = async () => {
     const v = presetSel.value;
-    presetSel.value = "";
-    if (!v) return;
-    const src = v.startsWith("p:") ? PRESETS[v.slice(2)] : themes[v.slice(2)];
-    if (src) await applyValues({ ...ALL_DEFAULTS, ...src });
+    const src = v.startsWith("p:") ? PRESETS[v.slice(2)] : v.startsWith("t:") ? themes[v.slice(2)] : null;
+    if (!src) return presetSel.focus();
+    await applyValues({ ...ALL_DEFAULTS, ...src });
+  };
+  const applyPickedBtn = el("button", { class: "pf-btn sm", title: "Load the selected preset or theme", onclick: applyPicked }, "Load");
+  presetSel.addEventListener("change", () => {
+    const v = presetSel.value;
+    // A saved theme's name goes into the name box, ready for Save or Delete.
+    if (v.startsWith("t:")) themeName.value = v.slice(2);
   });
 
   // Theme tools: save current options under a name, export, import, delete.
   const themeName = el("input", { type: "text", placeholder: "Theme name", style: "width:110px" });
+  // The name typed in the box, or else the theme picked in the list.
+  const pickedTheme = () => themeName.value.trim() || (presetSel.value.startsWith("t:") ? presetSel.value.slice(2) : "");
   const diffFromDefaults = () => {
     const d = {};
     for (const o of OPTIONS) if (values[o.key] !== ALL_DEFAULTS[o.key]) d[o.key] = values[o.key];
@@ -146,32 +162,35 @@ export function openDialog(app) {
     "div",
     { class: "pf-bar pf-themes" },
     themeName,
-    el("button", { class: "pf-btn sm", title: "Save the current options as a theme", onclick: async () => {
-      const name = themeName.value.trim();
+    el("button", { class: "pf-btn sm", title: "Save the current options as a theme with this name. Saving under an existing name updates that theme.", onclick: async () => {
+      const name = pickedTheme();
       if (!name) return themeName.focus();
+      const updated = name in themes;
       themes = { ...themes, [name]: diffFromDefaults() };
       await saveThemes(app, themes);
-      fillPresets();
-      toast(app, "success", "Theme saved", name);
+      themeName.value = name;
+      fillPresets("t:" + name);
+      toast(app, "success", updated ? "Theme updated" : "Theme saved", name);
     } }, "Save"),
     el("button", { class: "pf-btn sm", title: "Delete the theme with this name", onclick: async () => {
-      const name = themeName.value.trim();
+      const name = pickedTheme();
       if (!themes[name]) return themeName.focus();
       themes = { ...themes };
       delete themes[name];
       await saveThemes(app, themes);
+      themeName.value = "";
       fillPresets();
       toast(app, "info", "Theme deleted", name);
     } }, "Delete"),
     el("span", { class: "pf-spacer" }),
-    el("button", { class: "pf-btn sm", title: "Download the current options as a theme file", onclick: () => exportTheme(themeName.value.trim() || "prettifier-theme", diffFromDefaults()) }, "Export"),
+    el("button", { class: "pf-btn sm", title: "Download the current options as a theme file", onclick: () => exportTheme(pickedTheme() || "prettifier-theme", diffFromDefaults()) }, "Export"),
     el("button", { class: "pf-btn sm", title: "Load a theme file", onclick: async () => {
       const t = await importTheme(ALL_DEFAULTS);
       if (!t) return toast(app, "error", "Prettifier", "That file is not a Prettifier theme.");
       themeName.value = t.name;
       themes = { ...themes, [t.name]: t.options };
       await saveThemes(app, themes);
-      fillPresets();
+      fillPresets("t:" + t.name);
       await applyValues({ ...ALL_DEFAULTS, ...t.options });
     } }, "Import")
   );
@@ -188,7 +207,7 @@ export function openDialog(app) {
     if (live) schedulePreview();
     else revert();
   });
-  dialog.append(el("div", { class: "pf-bar" }, presetSel, scopeSel, el("span", { class: "pf-spacer" }), el("label", { class: "pf-check", title: "Re-arrange the canvas as you change options" }, liveBox, "Live preview")), themeBar);
+  dialog.append(el("div", { class: "pf-bar" }, presetSel, applyPickedBtn, scopeSel, el("span", { class: "pf-spacer" }), el("label", { class: "pf-check", title: "Re-arrange the canvas as you change options" }, liveBox, "Live preview")), themeBar);
 
   // Tabs + body
   const tabs = el("div", { class: "pf-tabs" });
@@ -289,7 +308,19 @@ export function openDialog(app) {
     revert();
     snapshot = null;
     // Cancel also discards option changes made in the dialog.
-    for (const o of OPTIONS) if (readOptions(app)[o.key] !== initial[o.key]) setOption(app, o.key, initial[o.key]);
+    const now = readOptions(app);
+    const pending = OPTIONS.filter((o) => now[o.key] !== initial[o.key]).map((o) => setOption(app, o.key, initial[o.key]));
+    if (app.canvas && linkMode !== undefined && app.canvas.links_render_mode !== linkMode) {
+      try {
+        app.extensionManager?.setting?.set?.("Comfy.LinkRenderMode", linkMode);
+      } catch {}
+      app.canvas.links_render_mode = linkMode;
+    }
+    // Once the options are back, redo the display with them, on the colors the dialog started from.
+    Promise.allSettled(pending).then(() => {
+      restoreLinkColors(app, linkColors);
+      applyDisplay(app);
+    });
     close();
   }
   const onKey = (e) => {

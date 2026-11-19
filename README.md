@@ -101,7 +101,10 @@ set several options at once. **Apply** saves the options as your defaults; **Can
 
   ![colors](docs/colors.png)
 - **Themes.** Save any set of options, colors included, as a named theme in the
-  options dialog, and export or import themes as JSON files to share them.
+  options dialog, and export or import themes as JSON files to share them. Pick a
+  preset or theme in the list and press Load to use it. Picking a theme does not
+  load it, so you can pick one and press Save to update it with the options as
+  they are now.
 - **Per-workflow options.** The options a workflow was prettified with are stored
   in the workflow file and reused next time.
 - **Summary note.** A note listing models, LoRAs, resolution, sampler settings and
@@ -252,6 +255,10 @@ workflow runs it first and stops if it finds anything.
 - New groups are a single level: Prettifier does not create groups inside groups.
 - Nested groups: nodes are laid out by their innermost group; outer groups are
   refit around their contents afterwards and may overlap neighbours.
+- A pinned node inside a group stays put while the rest of its group is laid out,
+  so the group is stretched to reach it.
+- Now and then a second prettify finds a slightly different arrangement than the
+  first (the starting order of the nodes is one of its inputs).
 - Inside a subgraph, the open subgraph is what gets prettified.
 - Subgraph connector order follows one side at a time: matching the inside can
   add crossings outside and the other way round. With several copies of the same
