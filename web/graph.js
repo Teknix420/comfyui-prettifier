@@ -454,43 +454,30 @@ export function changeTracker(app) {
   return app.extensionManager?.workflow?.activeWorkflow?.changeTracker ?? app.workflowManager?.activeWorkflow?.changeTracker ?? null;
 }
 
-/**
- * Run the layout on the given graph/nodes with the given options and apply it.
- * Returns { moved, groups } counts.
- */
-export function prettifyNodes(app, graph, nodes, opts) {
-  cancelAnimation();
-  const model = readModel(graph, nodes);
-  if (!model.nodes.length) return { moved: 0, groups: 0 };
-  const res = computeLayout(model, opts.paletteColors?.group ? { ...opts, stageGroupColors: opts.paletteColors.group } : opts);
-  const byId = new Map(nodes.map((n) => [n.id, n]));
-  const resized = opts.widthMode !== "keep" || opts.heightMode !== "keep";
+// How many times the layout may be re-run on its own result before it is taken as is.
+const SETTLE_PASSES = 8;
 
-  const tracker = opts.noHistory ? null : changeTracker(app);
-  tracker?.beforeChange?.();
-  try {
-    return applyLayout(app, graph, nodes, opts, model, res, byId, resized, tracker);
-  } catch (err) {
-    // Never leave ComfyUI's undo history held open.
-    try {
-      tracker?.afterChange?.();
-    } catch {}
-    throw err;
-  }
+const r1 = (v) => Math.round(v * 10) / 10;
+
+/** Everything the layout reads back from the graph that it also writes. */
+function layoutState(graph, nodes) {
+  const ns = nodes.map((n) => `${n.id}:${r1(n.pos[0])},${r1(n.pos[1])},${r1(n.size?.[0] ?? 0)},${r1(n.size?.[1] ?? 0)}`);
+  const gs = graphGroups(graph).map((g) => {
+    const r = groupRect(g);
+    return `${g.title}:${r1(r.x)},${r1(r.y)},${r1(r.w)},${r1(r.h)},${g.color ?? ""},${g.font_size ?? ""}`;
+  });
+  return ns.join("|") + "#" + gs.join("|");
 }
 
-function applyLayout(app, graph, nodes, opts, model, res, byId, resized, tracker) {
-
-  // Sizes apply immediately; positions may animate.
-  const moves = [];
+/** Put a layout result on the graph: node sizes and positions, and the groups. */
+function placeResult(graph, res, byId, resized) {
   for (const r of res.nodes) {
     const n = byId.get(r.id);
     if (!n || !r.moved) continue;
     if (resized && !n.flags?.collapsed) setNodeSize(n, [r.w, r.h]);
-    moves.push({ n, from: [n.pos[0], n.pos[1]], to: [r.x, r.y] });
+    n.pos[0] = r.x;
+    n.pos[1] = r.y;
   }
-
-  // Groups.
   const groups = graphGroups(graph);
   for (const u of res.groupUpdates) {
     const g = groups[u.index];
@@ -511,6 +498,71 @@ function applyLayout(app, graph, nodes, opts, model, res, byId, resized, tracker
     if (ng.color) g.color = ng.color;
     graph.add(g);
     setGroupRect(g, ng);
+  }
+}
+
+/**
+ * Run the layout on the given graph/nodes with the given options and apply it.
+ * Returns { moved, groups } counts.
+ *
+ * The layout looks at where things are now (to keep their order, and to find the
+ * groups), so its own result can make it choose differently the next time. It is
+ * therefore re-run on its result until that no longer changes anything, so that
+ * prettifying an already prettified workflow leaves it as it is.
+ */
+export function prettifyNodes(app, graph, nodes, opts) {
+  cancelAnimation();
+  let model = readModel(graph, nodes);
+  if (!model.nodes.length) return { moved: 0, groups: 0 };
+  const layoutOpts = opts.paletteColors?.group ? { ...opts, stageGroupColors: opts.paletteColors.group } : opts;
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const resized = opts.widthMode !== "keep" || opts.heightMode !== "keep";
+
+  const tracker = opts.noHistory ? null : changeTracker(app);
+  tracker?.beforeChange?.();
+  try {
+    const start = new Map(nodes.map((n) => [n.id, [n.pos[0], n.pos[1]]]));
+    const seen = [layoutState(graph, nodes)];
+    let res = computeLayout(model, layoutOpts);
+    let groupCount = 0;
+    let target = null; // the state to stop at once the layout is found to go in circles
+    for (let pass = 1; ; pass++) {
+      placeResult(graph, res, byId, resized);
+      groupCount = Math.max(groupCount, res.newGroups.length + res.groupUpdates.length);
+      const state = layoutState(graph, nodes);
+      if (pass >= SETTLE_PASSES || opts.settle === false) break;
+      if (target !== null) {
+        if (state === target) break;
+      } else {
+        if (state === seen[seen.length - 1]) break; // settled
+        const at = seen.indexOf(state);
+        if (at >= 0) {
+          // Going in circles: always stop at the same one of the states in the circle.
+          target = seen.slice(at).reduce((a, b) => (b < a ? b : a));
+          if (state === target) break;
+        }
+      }
+      seen.push(state);
+      model = readModel(graph, nodes);
+      res = computeLayout(model, layoutOpts);
+    }
+    return applyLayout(app, graph, nodes, opts, model, res, byId, start, groupCount, tracker);
+  } catch (err) {
+    // Never leave ComfyUI's undo history held open.
+    try {
+      tracker?.afterChange?.();
+    } catch {}
+    throw err;
+  }
+}
+
+/** Finish a layout that is already on the graph: colors, follow-up passes, animation, history. */
+function applyLayout(app, graph, nodes, opts, model, res, byId, start, groupCount, tracker) {
+  const moves = [];
+  for (const r of res.nodes) {
+    const n = byId.get(r.id);
+    if (!n || !r.moved) continue;
+    moves.push({ n, from: start.get(r.id) ?? [n.pos[0], n.pos[1]], to: [n.pos[0], n.pos[1]] });
   }
 
   // Node colors, now that the groups have their final place and color.
@@ -542,10 +594,6 @@ function applyLayout(app, graph, nodes, opts, model, res, byId, resized, tracker
 
   // Passes that need final positions (reroute cleanup) run with nodes placed, before any animation.
   if (opts.onPlaced) {
-    for (const m of moves) {
-      m.n.pos[0] = m.to[0];
-      m.n.pos[1] = m.to[1];
-    }
     try {
       opts.onPlaced();
     } catch (err) {
@@ -592,7 +640,7 @@ function applyLayout(app, graph, nodes, opts, model, res, byId, resized, tracker
     requestAnimationFrame(step);
   } else finish();
 
-  return { moved: moves.length, groups: res.newGroups.length + res.groupUpdates.length };
+  return { moved: moves.length, groups: groupCount };
 }
 
 /** Let ComfyUI's undo history know the graph changed (so Ctrl+Z works). */

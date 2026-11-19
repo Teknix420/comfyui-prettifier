@@ -759,6 +759,35 @@ const safeRe = (src) => {
   }
 };
 
+/**
+ * How existing groups nest. A group is inside another when the other holds all of
+ * its nodes (and more, or is the bigger box). Every node belongs directly to the
+ * innermost group that holds it.
+ * Returns { direct: Map nodeId -> group index, parent: Map index -> index | null }.
+ */
+function groupTree(nodes, groups) {
+  const known = new Map(groups.map((g) => [g.index, g]));
+  const members = new Map(groups.map((g) => [g.index, new Set()]));
+  for (const n of nodes) for (const gi of n.groups || []) members.get(gi)?.add(n.id);
+  const used = groups.filter((g) => members.get(g.index).size);
+  // Inner before outer: fewer nodes first, then the smaller box.
+  const before = (a, b) => members.get(a.index).size - members.get(b.index).size || a.w * a.h - b.w * b.h || a.index - b.index;
+  used.sort(before);
+  const rank = new Map(used.map((g, i) => [g.index, i]));
+  const parent = new Map();
+  used.forEach((g, i) => {
+    const mine = members.get(g.index);
+    const outer = used.slice(i + 1).find((h) => [...mine].every((id) => members.get(h.index).has(id)));
+    parent.set(g.index, outer ? outer.index : null);
+  });
+  const direct = new Map();
+  for (const n of nodes) {
+    const own = (n.groups || []).filter((gi) => known.has(gi)).sort((a, b) => rank.get(a) - rank.get(b))[0];
+    if (own != null) direct.set(n.id, own);
+  }
+  return { direct, parent };
+}
+
 function clusterKeys(nodes, edges, model, o) {
   // Auto keeps the user's groups. A selection inside a bigger group counts as
   // that too: it must not get new groups drawn inside the group it sits in.
@@ -770,14 +799,15 @@ function clusterKeys(nodes, edges, model, o) {
 
   if (mode === "existing") {
     const gById = new Map((model.groups || []).map((g) => [g.index, g]));
-    for (const n of nodes) {
-      const g = (n.groups || []).find((gi) => gById.has(gi));
-      if (g == null) continue;
-      key.set(n.id, "g" + g);
+    const tree = groupTree(nodes, model.groups || []);
+    for (const [id, g] of tree.direct) {
+      key.set(id, "g" + g);
       titles.set("g" + g, gById.get(g).title);
       colors.set("g" + g, gById.get(g).color);
     }
-    return { mode, key, titles, colors };
+    // Outer groups, as cluster keys: key -> the key of the group it sits in.
+    const parent = new Map([...tree.parent].map(([g, p]) => ["g" + g, p == null ? null : "g" + p]));
+    return { mode, key, titles, colors, parent };
   }
 
   let eligible = nodes.filter((n) => !n.isNote);
@@ -1009,29 +1039,88 @@ export function computeLayout(model, userOpts = {}) {
   const groupTitleOf = (g) => (o.groupRestyleExisting || !(g?.fontSize > 0) ? groupTitleH : Math.round(g.fontSize * 1.4));
   const modelGroup = new Map((model.groups || []).map((g) => [g.index, g]));
   const titleOf = (k) => (cl.mode === "existing" ? groupTitleOf(modelGroup.get(Number(String(k).slice(1)))) : groupTitleH);
-  const inner = new Map(); // key -> {pos, width, w, h}
-  const memberOf = new Map();
-  for (const [k, mem] of clusterMembers) {
-    const set = new Set(mem.map((n) => n.id));
-    const r = layered(
-      mem.map(hinted),
-      liveEdges.filter((e) => set.has(e.from) && set.has(e.to)).map(withOffsets),
-      o,
-      { isolatedPlacement: "column" }
-    );
-    inner.set(k, r);
-    for (const n of mem) memberOf.set(n.id, k);
+  // Groups can sit inside groups (only the user's own: new groups are one level).
+  // Each group is laid out from the inside out: its own nodes together with the
+  // boxes of the groups inside it. Everything below then works with the outermost
+  // groups, and with each node's place inside its outermost group.
+  const pad = o.groupPadding;
+  const parentOf = (k) => cl.parent?.get(k) ?? null;
+  const childKeys = new Map(); // key -> keys of the groups directly inside it
+  const allKeys = new Set(clusterMembers.keys());
+  for (const k of [...allKeys]) for (let p = parentOf(k); p != null; p = parentOf(p)) allKeys.add(p);
+  for (const k of allKeys) {
+    const p = parentOf(k);
+    if (p == null) continue;
+    if (!childKeys.has(p)) childKeys.set(p, []);
+    childKeys.get(p).push(k);
+  }
+  const topKeys = [...allKeys].filter((k) => parentOf(k) == null);
+  const inner = new Map(); // key -> { w, h } of the group's contents
+  const offIn = new Map(); // node id -> offset inside the box of the group being built (ends as: its outermost group)
+  const nodeW = new Map(); // node id -> width
+  const subtree = new Map(); // key -> every node in the group, nested ones included
+  const layoutCluster = (k) => {
+    const own = clusterMembers.get(k) ?? [];
+    const kids = childKeys.get(k) ?? [];
+    for (const c of kids) layoutCluster(c);
+    const nodesIn = [...own, ...kids.flatMap((c) => subtree.get(c))];
+    subtree.set(k, nodesIn);
+    const holder = new Map(); // node id -> the item that stands for it at this level
+    for (const n of own) holder.set(n.id, n.id);
+    for (const c of kids) for (const n of subtree.get(c)) holder.set(n.id, "c:" + c);
+    const items = own.map(hinted);
+    for (const c of kids) {
+      const its = subtree.get(c).map(hinted);
+      items.push({
+        id: "c:" + c,
+        w: inner.get(c).w + pad * 2,
+        h: inner.get(c).h + pad * 2 + titleOf(c),
+        origX: Math.min(...its.map((i) => i.origX)),
+        origY: Math.min(...its.map((i) => i.origY)),
+        flex: false,
+      });
+    }
+    const edgesIn = [];
+    for (const e of liveEdges) {
+      const a = holder.get(e.from), b = holder.get(e.to);
+      if (a == null || b == null || a === b) continue;
+      const fo = slotOff(byId.get(e.from), false, e.fromSlot), to = slotOff(byId.get(e.to), true, e.toSlot);
+      // A node inside an inner group: measure the socket from that group's box.
+      const lift = (id, h) => (h === id ? 0 : offIn.get(id).y);
+      edgesIn.push({
+        from: a,
+        to: b,
+        fromSlot: e.fromSlot,
+        toSlot: e.toSlot,
+        fromOff: fo == null && a === e.from ? null : (fo ?? (size.get(e.from).h + titleH) / 2) + lift(e.from, a),
+        toOff: to == null && b === e.to ? null : (to ?? (size.get(e.to).h + titleH) / 2) + lift(e.to, b),
+      });
+    }
+    const r = layered(items, edgesIn, o, { isolatedPlacement: "column" });
+    inner.set(k, { w: r.w, h: r.h });
+    const dx = pad, dy = pad + titleOf(k);
+    for (const n of own) {
+      const p = r.pos.get(n.id);
+      offIn.set(n.id, { x: p.x + dx, y: p.y + dy });
+      nodeW.set(n.id, r.width.get(n.id));
+    }
+    for (const c of kids) {
+      const p = r.pos.get("c:" + c);
+      for (const n of subtree.get(c)) {
+        const q = offIn.get(n.id);
+        offIn.set(n.id, { x: q.x + p.x + dx, y: q.y + p.y + dy });
+      }
+    }
+  };
+  const memberOf = new Map(); // node id -> its outermost group
+  for (const k of topKeys) {
+    layoutCluster(k);
+    for (const n of subtree.get(k)) memberOf.set(n.id, k);
   }
 
   // 6. Super layout (clusters + loose nodes).
-  const pad = o.groupPadding;
   const superId = (id) => (memberOf.has(id) ? "c:" + memberOf.get(id) : id);
-  const innerOff = (id) => {
-    const k = memberOf.get(id);
-    if (k == null) return { x: 0, y: 0 };
-    const p = inner.get(k).pos.get(id);
-    return { x: p.x + pad, y: p.y + pad + titleOf(k) };
-  };
+  const innerOff = (id) => offIn.get(id) ?? { x: 0, y: 0 };
   // Ungrouped nodes can line up with the nodes inside groups instead of with the
   // group boxes: each one is given the same margin a group has around its nodes.
   const inset = { x: 0, top: 0, bottom: 0 };
@@ -1051,9 +1140,9 @@ export function computeLayout(model, userOpts = {}) {
     it.h += inset.top + inset.bottom;
     superItems.push(it);
   }
-  for (const [k, mem] of clusterMembers) {
+  for (const k of topKeys) {
     const r = inner.get(k);
-    const its = mem.map(hinted);
+    const its = subtree.get(k).map(hinted);
     superItems.push({
       id: "c:" + k,
       w: r.w + pad * 2,
@@ -1091,7 +1180,7 @@ export function computeLayout(model, userOpts = {}) {
       const off = innerOff(n.id);
       x = sp.x + off.x;
       y = sp.y + off.y;
-      w = inner.get(k).width.get(n.id);
+      w = nodeW.get(n.id);
     } else {
       const sp = sup.pos.get(n.id);
       x = sp.x + inset.x;
@@ -1103,7 +1192,7 @@ export function computeLayout(model, userOpts = {}) {
 
   // 6b. Ungrouped nodes take the width of the interior of the group(s) in their column.
   if (o.looseAlign === "nodes" && o.looseMatchWidth && o.direction !== "TB" && clusterMembers.size) {
-    const groupSpans = [...clusterMembers.keys()].map((k) => {
+    const groupSpans = topKeys.map((k) => {
       const sp = sup.pos.get("c:" + k);
       return { x: sp.x, w: inner.get(k).w + pad * 2 };
     });
@@ -1122,7 +1211,7 @@ export function computeLayout(model, userOpts = {}) {
       const hitsBox = (r) => wide.x < r.x + r.w && r.x < wide.x + wide.w && wide.y < r.y + r.h && r.y < wide.y + wide.h;
       const blocked =
         [...box].some(([id, r]) => id !== n.id && hitsBox(r)) ||
-        [...clusterMembers.keys()].some((k) => {
+        topKeys.some((k) => {
           const sp = sup.pos.get("c:" + k), r = inner.get(k);
           return hitsBox({ x: sp.x, y: sp.y, w: r.w + pad * 2, h: r.h + pad * 2 + titleOf(k) });
         });
@@ -1275,26 +1364,27 @@ export function computeLayout(model, userOpts = {}) {
 
   const existing = model.groups || [];
   if (cl.mode === "existing") {
-    // Refit every existing group around its original members, inner groups first.
-    const members = new Map(existing.map((gr) => [gr.index, nodes.filter((n) => (n.groups || []).includes(gr.index)).map((n) => n.id)]));
-    const order = [...existing].sort((a, b) => members.get(a.index).length - members.get(b.index).length);
+    // Refit every existing group around the nodes that were laid out in it, inner
+    // groups first. A node that stayed where it was (pinned) does not shape its
+    // group: the group would have to stretch across the canvas to reach it.
+    const byIndex = new Map(existing.map((gr) => [gr.index, gr]));
     const rects = new Map();
-    for (const gr of order) {
-      const mem = members.get(gr.index);
-      if (!mem.length || !mem.some((id) => box.has(id))) continue;
-      const memSet = new Set(mem);
-      const children = order.filter(
-        (c) => c !== gr && rects.has(c.index) && members.get(c.index).length < mem.length && members.get(c.index).every((id) => memSet.has(id))
-      );
-      const r = rectAround(mem, children.map((c) => rects.get(c.index)), groupTitleOf(gr));
-      if (!r) continue;
-      rects.set(gr.index, r);
+    const fit = (k) => {
+      const kids = childKeys.get(k) ?? [];
+      for (const c of kids) fit(c);
+      const gr = byIndex.get(Number(k.slice(1)));
+      const mem = (subtree.get(k) ?? []).map((n) => n.id);
+      if (!gr || !mem.length) return;
+      const r = rectAround(mem, kids.map((c) => rects.get(c)).filter(Boolean), groupTitleOf(gr));
+      if (!r) return;
+      rects.set(k, r);
       const upd = { index: gr.index, ...r };
       const col = colorFor(mem, gr.color, existing.indexOf(gr));
       if (col !== gr.color) upd.color = col;
       if (o.groupRestyleExisting) upd.fontSize = o.groupFontSize;
       result.groupUpdates.push(upd);
-    }
+    };
+    for (const k of topKeys) fit(k);
   } else {
     for (const gr of existing) result.groupRemovals.push(gr.index);
     const titleRules = parseRules(o.groupTitleRules);
