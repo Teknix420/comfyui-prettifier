@@ -72,6 +72,7 @@ export const DEFAULTS = {
   categoryDepth: 1,
 
   isolatedPlacement: "bottom", // bottom | right | keep
+  looseSort: "id", // id | title | position: the order of unconnected nodes and notes
   notePlacement: "top", // top | bottom | keep
   componentPacking: "vertical", // vertical | horizontal
   respectPinned: true,
@@ -228,7 +229,51 @@ function tarjan(ids, adj) {
 // ---------------------------------------------------------------------------
 // Layered (Sugiyama-style) layout of a set of boxes.
 //
-// items: [{id, w, h, origX, origY, flex}]  (box = whole node incl. title bar)
+// The order of nodes that no link puts in an order (unconnected nodes, notes).
+const collator = new Intl.Collator("en", { numeric: true, sensitivity: "base" });
+const compareIds = (a, b) => {
+  const na = Number(a), nb = Number(b);
+  return Number.isFinite(na) && Number.isFinite(nb) ? na - nb : collator.compare(String(a), String(b));
+};
+/** id -> rank for "id" and "title"; null for "position" (the order they are in now). */
+export function looseRanks(nodes, mode) {
+  if (mode !== "id" && mode !== "title") return null;
+  const name = (n) => String(n.title || n.typeName || n.type || "").trim();
+  const sorted = [...nodes].sort(
+    (a, b) => (mode === "title" ? collator.compare(name(a), name(b)) : 0) || compareIds(a.id, b.id)
+  );
+  return new Map(sorted.map((n, i) => [n.id, i]));
+}
+/**
+ * Reading order of boxes {origX, origY, w, h}: row by row, left to right (or
+ * column by column, top to bottom). Boxes whose tops are close share a row, so
+ * a wrapped row that was laid out before comes back in the same order.
+ */
+export function readingOrder(list, columns = false) {
+  const main = (i) => (columns ? i.origX : i.origY), cross = (i) => (columns ? i.origY : i.origX);
+  const len = (i) => (columns ? i.w : i.h) || 0;
+  const byMain = [...list].sort((a, b) => main(a) - main(b) || cross(a) - cross(b));
+  const out = [];
+  let row = [], edge = 0;
+  for (const it of byMain) {
+    if (row.length && main(it) >= edge) {
+      out.push(...row.sort((a, b) => cross(a) - cross(b) || main(a) - main(b)));
+      row = [];
+    }
+    if (!row.length) edge = main(it) + Math.max(len(it) / 2, 1);
+    row.push(it);
+  }
+  out.push(...row.sort((a, b) => cross(a) - cross(b) || main(a) - main(b)));
+  return out;
+}
+// Items with a rank (`ord`) go in rank order; the rest keep their reading order.
+function sortLoose(list, columns = false) {
+  const ranked = list.filter((i) => i.ord != null).sort((a, b) => a.ord - b.ord);
+  const rest = readingOrder(list.filter((i) => i.ord == null), columns);
+  list.splice(0, list.length, ...rest, ...ranked);
+}
+
+// items: [{id, w, h, origX, origY, flex, ord?}]  (box = whole node incl. title bar)
 // edges: [{from, to, fromSlot, toSlot, fromOff, toOff}] offsets from box top, or null = center
 // Returns { pos: Map id -> {x, y}, width: Map id -> w, w, h } in real (untransposed) coordinates.
 
@@ -292,7 +337,7 @@ export function layered(items, edges, o, opts = {}) {
   // shape, instead of one tall stack. Inside a group the loose nodes join in.
   const blocks = results.map((r) => ({ w: r.w, h: r.h, r }));
   if (compact && inGroup) {
-    isolated.sort((a, b) => a.origY - b.origY || a.origX - b.origX);
+    sortLoose(isolated);
     for (const it of isolated.splice(0)) blocks.push({ w: it.w, h: it.h, it });
   }
   if (compact && blocks.length > 1) {
@@ -347,7 +392,7 @@ export function layered(items, edges, o, opts = {}) {
   }
 
   if (isolated.length) {
-    isolated.sort((a, b) => a.origY - b.origY || a.origX - b.origX);
+    sortLoose(isolated, isolatedPlacement === "right" && !TB);
     const hasMain = connected.length > 0;
     if (isolatedPlacement === "column") {
       // one column under the main area (used inside groups)
@@ -983,6 +1028,7 @@ export function computeLayout(model, userOpts = {}) {
   const layoutNodes = live.filter((n) => !bandSet.has(n.id));
 
   // 4. Sizes & items.
+  const ranks = looseRanks(live, o.looseSort);
   const size = new Map();
   for (const n of live) size.set(n.id, sizeNode(n, o));
   if (o.direction === "TB") for (const s of size.values()) s.flex = false;
@@ -993,6 +1039,7 @@ export function computeLayout(model, userOpts = {}) {
     origX: n.x,
     origY: n.y - titleH,
     flex: size.get(n.id).flex,
+    ord: ranks?.get(n.id),
   });
   const slotOff = (n, isInput, slot) => {
     const arr = isInput ? n.inSlots : n.outSlots;
@@ -1223,7 +1270,11 @@ export function computeLayout(model, userOpts = {}) {
 
   // 7. Notes band.
   if (noteBand.length) {
-    noteBand.sort((a, b) => a.x - b.x || a.y - b.y);
+    if (ranks) noteBand.sort((a, b) => ranks.get(a.id) - ranks.get(b.id));
+    else {
+      const boxes = noteBand.map((n) => ({ n, origX: n.x, origY: n.y, w: size.get(n.id).w, h: size.get(n.id).h }));
+      noteBand.splice(0, noteBand.length, ...readingOrder(boxes).map((b) => b.n));
+    }
     const limit = Math.max(sup.w, 1000);
     const rows = [];
     let row = [], rw = 0;
