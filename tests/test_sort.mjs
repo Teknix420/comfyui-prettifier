@@ -90,4 +90,13 @@ for (const isolatedPlacement of ["bottom", "right"]) {
     eq(order(res, [8, 2, 5]), [2, 5, 8], `${packing}: unconnected nodes inside a group sort by node ID`);
   }
 }
+// Group members linked only to nodes outside the group are not "unconnected":
+// sources 10 and 11 feed sinks 2 and 1, and the links must not cross.
+{
+  const nodes = [plain(10, "Src A", 0, 0), plain(11, "Src B", 0, 200), plain(2, "Sink A", 400, 0, { groups: [0] }), plain(1, "Sink B", 400, 200, { groups: [0] })];
+  const m = model(nodes, [{ from: 10, to: 2, fromSlot: 0, toSlot: 0 }, { from: 11, to: 1, fromSlot: 0, toSlot: 0 }], [{ index: 0, title: "Sinks", x: 380, y: -60, w: 240, h: 400 }]);
+  const res = computeLayout(m, { groupBy: "existing" });
+  const y = (id) => res.nodes.find((n) => n.id === id).y;
+  eq(Math.sign(y(10) - y(11)), Math.sign(y(2) - y(1)), "linked group members keep the order of their wiring");
+}
 console.log(`All ${checks} sort checks passed`);

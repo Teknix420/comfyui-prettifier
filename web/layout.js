@@ -1028,7 +1028,9 @@ export function computeLayout(model, userOpts = {}) {
   const layoutNodes = live.filter((n) => !bandSet.has(n.id));
 
   // 4. Sizes & items.
-  const ranks = looseRanks(live, o.looseSort);
+  // Only nodes with no links at all get a rank: a group member linked to nodes
+  // outside its group has no edges inside it, but its order still follows the wiring.
+  const ranks = looseRanks(live.filter((n) => !degree.get(n.id)), o.looseSort);
   const size = new Map();
   for (const n of live) size.set(n.id, sizeNode(n, o));
   if (o.direction === "TB") for (const s of size.values()) s.flex = false;
