@@ -572,6 +572,59 @@ function layoutComponent(items, edges, o, aspect = 1.6) {
     }
     best.forEach((l, i) => (layers[i] = l));
     refreshRanks();
+    // The sweeps reorder whole columns, also where the order makes no difference
+    // to the crossings. Put neighbours back in the order they had on the canvas
+    // wherever that does not add a crossing. (Not when tall columns are wrapped:
+    // one column then stands as several side by side, so height alone no longer
+    // says which node comes first.)
+    if (o.preserveOrder && o.packing !== "wrap" && dag.length <= 400) {
+      const before = (a, b) => byId.get(a).origY - byId.get(b).origY || topoIdx.get(a) - topoIdx.get(b);
+      const touching = new Map(items.map((i) => [i.id, []]));
+      for (const e of dag) {
+        touching.get(e.from).push(e);
+        touching.get(e.to).push(e);
+      }
+      const crosses = (e, f) => {
+        if (e.from === f.from || e.to === f.to) return false;
+        const e0 = L.get(e.from), e1 = L.get(e.to), f0 = L.get(f.from), f1 = L.get(f.to);
+        const lo = Math.max(e0, f0), hi = Math.min(e1, f1);
+        if (hi <= lo) return false;
+        const ea = norm(e.from), eb = norm(e.to), fa = norm(f.from), fb = norm(f.to);
+        const at = (p, q, l0, l1, l) => p + ((q - p) * (l - l0)) / (l1 - l0);
+        const d1 = at(ea, eb, e0, e1, lo) - at(fa, fb, f0, f1, lo), d2 = at(ea, eb, e0, e1, hi) - at(fa, fb, f0, f1, hi);
+        return d1 * d2 < -1e-9;
+      };
+      // Swapping two neighbours only changes crossings that involve one of their links.
+      const crossingsOf = (a, b) => {
+        const mine = new Set([...touching.get(a), ...touching.get(b)]);
+        let c = 0;
+        for (const e of mine) for (const f of dag) if (f !== e && crosses(e, f)) c += mine.has(f) ? 0.5 : 1;
+        return c;
+      };
+      let budget = 4e7; // link pairs looked at; keeps huge columns from stalling the editor
+      for (let round = 0, changed = true; changed && round < 50 && budget > 0; round++) {
+        changed = false;
+        for (const layer of layers) {
+          for (let i = 0; i + 1 < layer.length && budget > 0; i++) {
+            const a = layer[i], b = layer[i + 1];
+            if (before(a, b) <= 0) continue;
+            budget -= 2 * (touching.get(a).length + touching.get(b).length) * dag.length;
+            const c = crossingsOf(a, b);
+            layer[i] = b;
+            layer[i + 1] = a;
+            rank.set(b, i);
+            rank.set(a, i + 1);
+            if (crossingsOf(a, b) <= c) changed = true;
+            else {
+              layer[i] = a;
+              layer[i + 1] = b;
+              rank.set(a, i);
+              rank.set(b, i + 1);
+            }
+          }
+        }
+      }
+    }
   }
 
   // 4b. Wrap tall columns: a column much taller than the target shape allows is
