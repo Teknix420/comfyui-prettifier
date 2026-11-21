@@ -572,6 +572,38 @@ function layoutComponent(items, edges, o, aspect = 1.6) {
     }
     best.forEach((l, i) => (layers[i] = l));
     refreshRanks();
+    // The sweeps reorder whole columns, also where the order makes no difference
+    // to the crossings. Put neighbours back in the order they had on the canvas
+    // wherever that does not add a crossing. (Not when tall columns are wrapped:
+    // one column then stands as several side by side, so height alone no longer
+    // says which node comes first.)
+    if (o.preserveOrder && o.packing !== "wrap" && dag.length <= 400) {
+      const before = (a, b) => byId.get(a).origY - byId.get(b).origY || topoIdx.get(a) - topoIdx.get(b);
+      let c = countCrossings();
+      for (let round = 0, changed = true; changed && round < 50; round++) {
+        changed = false;
+        for (const layer of layers) {
+          for (let i = 0; i + 1 < layer.length; i++) {
+            const a = layer[i], b = layer[i + 1];
+            if (before(a, b) <= 0) continue;
+            layer[i] = b;
+            layer[i + 1] = a;
+            rank.set(b, i);
+            rank.set(a, i + 1);
+            const c2 = countCrossings();
+            if (c2 <= c) {
+              c = c2;
+              changed = true;
+            } else {
+              layer[i] = a;
+              layer[i + 1] = b;
+              rank.set(a, i);
+              rank.set(b, i + 1);
+            }
+          }
+        }
+      }
+    }
   }
 
   // 4b. Wrap tall columns: a column much taller than the target shape allows is
