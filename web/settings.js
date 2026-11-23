@@ -31,7 +31,7 @@ export const OPTIONS = [
   combo("columnAlign", "Layout", "Node Alignment Inside a Column", [opt("left", "Left"), opt("center", "Center"), opt("right", "Right")]),
   slider("orderingPasses", "Layout", "Crossing Reduction Passes", 0, 24, 1, "More passes means fewer crossing links on big workflows, at the cost of speed."),
   slider("alignIterations", "Layout", "Link Straightening Iterations", 0, 30, 1),
-  bool("preserveOrder", "Layout", "Respect Current Top-to-Bottom Order", "Use the existing vertical order of nodes as the starting point."),
+  bool("preserveOrder", "Layout", "Respect Current Top-to-Bottom Order", "Nodes in the same column keep the order they are in now, unless that would make links cross."),
 
   // Spacing
   slider("hGap", "Spacing", "Horizontal Gap Between Columns", 0, 400, 10),

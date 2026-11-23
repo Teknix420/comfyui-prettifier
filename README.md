@@ -239,6 +239,7 @@ node tests/test_variables.mjs
 node tests/test_colors.mjs
 node tests/test_groups.mjs          # collapsed nodes stay in their groups
 node tests/test_sort.mjs            # unconnected nodes and notes sort by ID, title or position
+node tests/test_order.mjs           # nodes in a column keep their canvas order
 ```
 
 Before a release, `python3 .github/scripts/registry_scan.py` checks the files that
