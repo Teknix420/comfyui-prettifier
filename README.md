@@ -152,7 +152,7 @@ connectors that would end up with the same label are numbered. Inside a subgraph
 | Spacing | Horizontal, vertical and section gaps, snap to grid, grid size, anchor |
 | Sizing | Node width mode, fixed/min/max width, node height mode, shrink nodes with images or text |
 | Groups | Arrangement (follow the flow, compact, most compact), target shape, group by (auto, existing, stage, category, section, node type, node color, only my rules, none), custom group rules, groups not to create, name template, name find/replace, number duplicate names, restyle existing groups, minimum group size, category depth, padding, title size, color mode, single color |
-| Placement | Unconnected nodes, notes, separate sections, align ungrouped nodes with the group box or with the nodes inside groups, match grouped node width, never move pinned nodes |
+| Placement | Unconnected nodes, notes, sort unconnected nodes by node ID, title or current position, separate sections, align ungrouped nodes with the group box or with the nodes inside groups, match grouped node width, never move pinned nodes |
 | Links | Reroute dots (auto, remove, keep), rerouted links take the shortest way or stay level, bends centered between columns or next to the node, direction preference (horizontal or vertical first), send rerouted links above or below the workflow, overlapping links side by side or merged (by output, or all), route around groups, clearance, minimum link length, replace links with variables (long, blocked, both), length that counts as long, variable name template, collapse variable nodes |
 | Nodes | Collapse mode and pattern, muted/bypassed style, subgraphs, subgraph connector order |
 | Renaming | Rename on prettify, title mode/template/criteria/type filter/capitalization/numbering/rules, connector mode/template/sides/only connected/widget inputs/capitalization/rules, subgraph connector mode/template |
@@ -238,6 +238,7 @@ node tests/test_subgraphs.mjs
 node tests/test_variables.mjs
 node tests/test_colors.mjs
 node tests/test_groups.mjs          # collapsed nodes stay in their groups
+node tests/test_sort.mjs            # unconnected nodes and notes sort by ID, title or position
 node tests/test_order.mjs           # nodes in a column keep their canvas order
 ```
 

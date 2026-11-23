@@ -100,6 +100,7 @@ export const OPTIONS = [
   // Placement
   combo("isolatedPlacement", "Placement", "Unconnected Nodes", [opt("bottom", "Row Below"), opt("right", "Column to the Right"), opt("keep", "Leave Where They Are")]),
   combo("notePlacement", "Placement", "Notes", [opt("top", "Row Above the Workflow"), opt("bottom", "Row Below"), opt("keep", "Leave Where They Are")]),
+  combo("looseSort", "Placement", "Sort Unconnected Nodes By", [opt("id", "Node ID"), opt("title", "Title A to Z"), opt("position", "Current Position")], "The order of notes and of nodes with no links, on the canvas and inside groups. Nodes with links follow the wiring instead."),
   combo("componentPacking", "Placement", "Separate Sections", [opt("vertical", "Stack Vertically"), opt("horizontal", "Side by Side")]),
   combo("looseAlign", "Placement", "Align Ungrouped Nodes With", [opt("box", "The Group Box"), opt("nodes", "The Nodes Inside Groups")], "Next to a group, an ungrouped node can line up with the edge of the group box or, inset by the group padding, with the nodes inside it."),
   bool("looseMatchWidth", "Placement", "Ungrouped Nodes Match Grouped Node Width", "With 'The nodes inside groups': an ungrouped node in the same column as a group is widened to the width of the group's interior."),
